@@ -2,11 +2,16 @@ name: CMake on Windows
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [ "AutoCompile" ]
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. v1.0.0)'
+        required: true
   pull_request:
-    branches: [ "master" ]
+    branches: [ "AutoCompile" ]
 
 env:
   BUILD_TYPE: Release
@@ -16,7 +21,10 @@ jobs:
     runs-on: windows-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
     - name: Configure CMake
       run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
@@ -27,6 +35,7 @@ jobs:
     - name: Create Release
       uses: softprops/action-gh-release@v2
       with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           files: ${{github.workspace}}/build/Release/iomonitor.exe
           generate_release_notes: true
       env:
