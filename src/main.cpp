@@ -42,6 +42,7 @@ static void printHelp() {
     wprintf(L"    P                Sort by Process lifetime I/O\n");
     wprintf(L"    C                Clear session totals\n");
     wprintf(L"    O                Toggle CSV recording on/off\n");
+    wprintf(L"    M                Toggle overlay mini-window (always-on-top, 25%% opaque)\n");
     wprintf(L"    1-5              Sample speed presets (200/500/1000/2000/5000 ms)\n");
     wprintf(L"    +/-              Increase / decrease displayed process count\n");
     wprintf(L"    [ / ]            Adjust display refresh speed\n\n");

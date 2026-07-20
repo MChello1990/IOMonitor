@@ -9,6 +9,7 @@
 #include <windows.h>
 #include "Monitor.h"
 #include "Recorder.h"
+#include "OverlayWindow.h"
 #include <string>
 #include <atomic>
 #include <chrono>
@@ -31,6 +32,10 @@ private:
     void renderProcessRows(const std::vector<ProcessIOData>& procs, int maxDataRows);
     void renderFooter(int sampleMs, bool isRecording);
     bool handleInput(DiskMonitor& monitor, Recorder& recorder);
+
+    // Overlay mini-window support
+    bool enterOverlayMode(DiskMonitor& monitor, Recorder& recorder);
+    void exitOverlayMode();
 
     std::wstring fmtRate(double bytesPerSec) const;
     std::wstring fmtBytes(uint64_t bytes) const;
@@ -65,4 +70,8 @@ private:
 
     // Previous sample data for rate change indicators
     std::vector<ProcessIOData> m_prevProcs;
+
+    // Overlay window
+    OverlayWindow m_overlay;
+    bool m_overlayModeRequested = false;
 };

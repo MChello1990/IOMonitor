@@ -42,6 +42,8 @@ struct ProcessIOData {
 struct SystemIOStats {
     double   physicalDiskReadRate = 0.0;
     double   physicalDiskWriteRate = 0.0;
+    uint64_t physicalDiskReadBytes = 0;   // cumulative bytes from PDH (lifetime)
+    uint64_t physicalDiskWriteBytes = 0;  // cumulative bytes from PDH (lifetime)
     uint64_t monitoredReadRate = 0;
     uint64_t monitoredWriteRate = 0;
     int      activeProcessCount = 0;
@@ -103,9 +105,14 @@ private:
     std::unordered_map<DWORD, SessionAcc>  m_sessionAcc;
 
     PDH_HQUERY  m_pdhQuery = nullptr;
-    PDH_HCOUNTER m_pdhRead = nullptr;
-    PDH_HCOUNTER m_pdhWrite = nullptr;
+    PDH_HCOUNTER m_pdhReadRate = nullptr;
+    PDH_HCOUNTER m_pdhWriteRate = nullptr;
     bool m_pdhOk = false;
+
+    // Self-accumulated cumulative bytes (PDH doesn't provide a direct
+    // cumulative counter for PhysicalDisk; we sum rate × elapsed time)
+    uint64_t m_accumReadBytes = 0;
+    uint64_t m_accumWriteBytes = 0;
 
     std::atomic<bool> m_running{false};
     std::atomic<bool> m_hasNewData{false};

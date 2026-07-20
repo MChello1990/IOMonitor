@@ -10,13 +10,16 @@ DiskMonitor::DiskMonitor() {
     PDH_STATUS st = PdhOpenQueryW(nullptr, 0, &m_pdhQuery);
     if (st == ERROR_SUCCESS) {
         if (PdhAddEnglishCounterW(m_pdhQuery,
-                L"\\PhysicalDisk(_Total)\\Disk Read Bytes/sec", 0, &m_pdhRead) == ERROR_SUCCESS &&
+                L"\\PhysicalDisk(_Total)\\Disk Read Bytes/sec", 0, &m_pdhReadRate) == ERROR_SUCCESS &&
             PdhAddEnglishCounterW(m_pdhQuery,
-                L"\\PhysicalDisk(_Total)\\Disk Write Bytes/sec", 0, &m_pdhWrite) == ERROR_SUCCESS) {
+                L"\\PhysicalDisk(_Total)\\Disk Write Bytes/sec", 0, &m_pdhWriteRate) == ERROR_SUCCESS) {
             PdhCollectQueryData(m_pdhQuery);
             m_pdhOk = true;
         }
     }
+    // Note: PDH does not provide a direct cumulative-bytes counter for
+    // PhysicalDisk. Instead, we accumulate from the rate counters ourselves
+    // in sample(), using the elapsed time between samples.
 }
 
 DiskMonitor::~DiskMonitor() {
@@ -66,14 +69,33 @@ void DiskMonitor::sample() {
 
     double pdhReadRate = 0.0, pdhWriteRate = 0.0;
 
-    // Physical disk counters via PDH
+    // Physical disk rate counters via PDH
     if (m_pdhOk) {
         PdhCollectQueryData(m_pdhQuery);
         PDH_FMT_COUNTERVALUE v;
-        if (PdhGetFormattedCounterValue(m_pdhRead, PDH_FMT_LARGE, nullptr, &v) == ERROR_SUCCESS)
-            pdhReadRate = static_cast<double>(v.largeValue);
-        if (PdhGetFormattedCounterValue(m_pdhWrite, PDH_FMT_LARGE, nullptr, &v) == ERROR_SUCCESS)
-            pdhWriteRate = static_cast<double>(v.largeValue);
+        // Use PDH_FMT_DOUBLE for rate counters — more reliable than LARGE
+        if (PdhGetFormattedCounterValue(m_pdhReadRate, PDH_FMT_DOUBLE, nullptr, &v) == ERROR_SUCCESS)
+            pdhReadRate = v.doubleValue;
+        if (PdhGetFormattedCounterValue(m_pdhWriteRate, PDH_FMT_DOUBLE, nullptr, &v) == ERROR_SUCCESS)
+            pdhWriteRate = v.doubleValue;
+    }
+
+    // Accumulate cumulative bytes from rate × elapsed time
+    // (PDH does not expose a direct cumulative-bytes counter for PhysicalDisk)
+    {
+        static auto s_lastSampleTime = std::chrono::steady_clock::now();
+        static uint64_t s_accReadBytes = 0;
+        static uint64_t s_accWriteBytes = 0;
+
+        double elapsed = std::chrono::duration<double>(now - s_lastSampleTime).count();
+        if (elapsed > 0.0 && elapsed < 300.0) { // guard against huge gaps
+            s_accReadBytes  += static_cast<uint64_t>(pdhReadRate * elapsed);
+            s_accWriteBytes += static_cast<uint64_t>(pdhWriteRate * elapsed);
+        }
+        s_lastSampleTime = now;
+
+        m_accumReadBytes  = s_accReadBytes;
+        m_accumWriteBytes = s_accWriteBytes;
     }
 
     HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -86,7 +108,7 @@ void DiskMonitor::sample() {
     std::vector<ProcessIOData> current;
     current.reserve(300);
 
-    uint64_t monReadRate = 0, monWriteRate = 0;
+    double monReadRate = 0.0, monWriteRate = 0.0;
     int activeCount = 0;
 
     do {
@@ -158,8 +180,8 @@ void DiskMonitor::sample() {
 
         if (d.active) activeCount++;
 
-        monReadRate  += static_cast<uint64_t>(d.readRate);
-        monWriteRate += static_cast<uint64_t>(d.writeRate);
+        monReadRate  += d.readRate;
+        monWriteRate += d.writeRate;
 
         current.push_back(std::move(d));
 
@@ -193,14 +215,18 @@ void DiskMonitor::sample() {
 
     // Update shared state — all writes under lock
     {
+        int totalCount = static_cast<int>(current.size());
+
         std::lock_guard<std::mutex> lk(m_mutex);
         m_processes = std::move(current);
-        m_sysStats.physicalDiskReadRate  = pdhReadRate;
-        m_sysStats.physicalDiskWriteRate = pdhWriteRate;
-        m_sysStats.monitoredReadRate  = monReadRate;
-        m_sysStats.monitoredWriteRate = monWriteRate;
+        m_sysStats.physicalDiskReadRate   = pdhReadRate;
+        m_sysStats.physicalDiskWriteRate  = pdhWriteRate;
+        m_sysStats.physicalDiskReadBytes  = m_accumReadBytes;
+        m_sysStats.physicalDiskWriteBytes = m_accumWriteBytes;
+        m_sysStats.monitoredReadRate  = static_cast<uint64_t>(monReadRate);
+        m_sysStats.monitoredWriteRate = static_cast<uint64_t>(monWriteRate);
         m_sysStats.activeProcessCount  = activeCount;
-        m_sysStats.totalProcessCount   = static_cast<int>(m_processes.size());
+        m_sysStats.totalProcessCount   = totalCount;
     }
 
     m_hasNewData = true;

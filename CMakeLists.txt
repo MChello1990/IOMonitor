@@ -19,12 +19,14 @@ set(SOURCES
     src/Monitor.cpp
     src/Display.cpp
     src/Recorder.cpp
+    src/OverlayWindow.cpp
 )
 
 set(HEADERS
     src/Monitor.h
     src/Display.h
     src/Recorder.h
+    src/OverlayWindow.h
 )
 
 add_executable(iomonitor ${SOURCES} ${HEADERS})

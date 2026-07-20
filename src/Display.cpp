@@ -149,6 +149,19 @@ void ConsoleDisplay::run(DiskMonitor& monitor, Recorder& recorder) {
     }
 
     while (m_running) {
+        // Check if overlay mode was requested
+        if (m_overlayModeRequested) {
+            m_overlayModeRequested = false;
+            if (enterOverlayMode(monitor, recorder)) {
+                // Overlay window returned — restore full console
+                // Clear row cache to force full redraw
+                for (auto& rc : m_rowCache) rc.valid = false;
+                write(CLS);
+                // Continue the main loop: will render fresh on next iteration
+                continue;
+            }
+        }
+
         bool needRender = false;
 
         // Wait for new data or user input
@@ -229,6 +242,12 @@ bool ConsoleDisplay::handleInput(DiskMonitor& monitor, Recorder& recorder) {
             }
         }
         break;
+    case 'm': case 'M': {
+        // Enter overlay mini-window mode
+        // Need to return false to let run() handle the mode switch
+        m_overlayModeRequested = true;
+        return true;
+    }
     case '+': case '=': if (m_maxDisplay < 100) m_maxDisplay += 5;   break;
     case '-': case '_': if (m_maxDisplay > 5)   m_maxDisplay -= 5;   break;
     case '[': if (m_refreshMs > 100)  m_refreshMs -= 100; break;
@@ -450,7 +469,7 @@ void ConsoleDisplay::renderFooter(int sampleMs, bool isRecording) {
     wchar_t tmp[512];
     swprintf(tmp, 512,
              L" Sort: %s  |  Show: %d  |  Sample: %dms / Refresh: %dms  |  %s  |  "
-             L"[Q]uit [R][W][T][S][P] [C]lear [O]Record +/- [ ]Speed 1-5",
+             L"[Q]uit [R][W][T][S][P] [C]lear [O]Record [M]ini +/- [ ]Speed 1-5",
              sortNames[static_cast<int>(m_sortMode)],
              m_maxDisplay, sampleMs, m_refreshMs,
              recStatus.c_str());
@@ -463,4 +482,67 @@ void ConsoleDisplay::renderFooter(int sampleMs, bool isRecording) {
 
     // Bottom border
     write(cuPos(m_consoleH, 1) + std::wstring(C::WHITE) + BOX_BL + repeat(BOX_H, innerW) + BOX_BR + C::RST);
+}
+
+// ── Overlay mini-window mode ────────────────────────────────────────
+bool ConsoleDisplay::enterOverlayMode(DiskMonitor& monitor, Recorder& recorder) {
+    // Clear the console screen
+    write(std::wstring(CLS) + SHOW_CUR);
+
+    // Start the overlay window
+    if (!m_overlay.start(monitor, recorder)) {
+        // Failed — redraw full console and continue
+        write(std::wstring(CLS) + HIDE_CUR);
+        return false;
+    }
+
+    // Hide the console window while overlay is active
+    HWND hConsole = GetConsoleWindow();
+    ShowWindow(hConsole, SW_HIDE);
+
+    // Wait for the overlay to signal switch-back
+    while (m_running.load() && !m_overlay.shouldSwitchBack()) {
+        // Still check for keyboard input in case user presses Q in console
+        if (_kbhit()) {
+            int ch = _getch();
+            if (ch == 'q' || ch == 'Q' || ch == 27) {
+                m_running = false;
+                m_overlay.stop();
+                ShowWindow(hConsole, SW_SHOW);
+                return false; // signal that we're quitting, not switching back
+            }
+            if (ch == 'm' || ch == 'M') {
+                // M pressed again — switch back
+                break;
+            }
+        }
+
+        // Keep pushing samples to recorder if active
+        if (recorder.isRecording() && monitor.hasNewData()) {
+            monitor.clearNewDataFlag();
+            auto procs = monitor.getProcesses(m_sortMode, static_cast<size_t>(m_maxDisplay));
+            recorder.enqueueSample(procs);
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+
+    m_overlay.stop();
+    m_overlay.clearSwitchBackFlag();
+
+    // Restore console window
+    ShowWindow(hConsole, SW_SHOW);
+    SetForegroundWindow(hConsole);
+
+    // Restore console state
+    DWORD mode = m_oldOutMode | ENABLE_VIRTUAL_TERMINAL_PROCESSING | DISABLE_NEWLINE_AUTO_RETURN;
+    SetConsoleMode(m_hOut, mode);
+    SetConsoleOutputCP(CP_UTF8);
+    write(HIDE_CUR);
+
+    return m_running.load();
+}
+
+void ConsoleDisplay::exitOverlayMode() {
+    m_overlay.stop();
 }
