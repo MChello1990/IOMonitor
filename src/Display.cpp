@@ -276,7 +276,7 @@ void ConsoleDisplay::renderHeader(const SystemIOStats& stats) {
     {
         wchar_t tmp[256];
         swprintf(tmp, 256,
-                 L"  IO Monitor v1.0   |   Up: %s   |   Active: %d / %d   |   "
+                 L"  IO Monitor v1.5   |   Up: %s   |   Active: %d / %d   |   "
                  L"Disk: R %s  W %s",
                  fmtTime(uptime).c_str(),
                  stats.activeProcessCount, stats.totalProcessCount,
