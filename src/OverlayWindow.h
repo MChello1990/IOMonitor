@@ -10,6 +10,7 @@
 #include <windows.h>
 #include "Monitor.h"
 #include "Recorder.h"
+#include "IopsMonitor.h"
 #include <string>
 #include <atomic>
 #include <thread>
@@ -32,6 +33,13 @@ struct OverlaySnapshot {
     int      activeProcesses  = 0;
     int      totalProcesses   = 0;
     bool     isRecording      = false;
+
+    // IOPS & Queue Depth (from IopsMonitor)
+    double   readIops         = 0.0;
+    double   writeIops        = 0.0;
+    double   totalIops        = 0.0;
+    double   queueDepth       = 0.0;
+    bool     iopsValid        = false;
 };
 
 class OverlayWindow {
@@ -82,6 +90,9 @@ private:
     DiskMonitor* m_monitor = nullptr;
     Recorder*    m_recorder = nullptr;
 
+    // IOPS & Queue Depth monitor — started/stopped with overlay
+    IopsMonitor  m_iopsMonitor;
+
     // State
     std::atomic<bool> m_running{false};
     std::atomic<bool> m_switchBack{false};
@@ -92,6 +103,6 @@ private:
     OverlaySnapshot m_snapshot;
 
     // Window dimensions
-    int m_width  = 280;
-    int m_height = 130;
+    int m_width  = 300;
+    int m_height = 200;
 };

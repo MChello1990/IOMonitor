@@ -30,6 +30,9 @@
     <ClCompile Include="src\OverlayWindow.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="src\IopsMonitor.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\Monitor.h">
@@ -42,6 +45,9 @@
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="src\OverlayWindow.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="src\IopsMonitor.h">
       <Filter>头文件</Filter>
     </ClInclude>
   </ItemGroup>

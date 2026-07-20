@@ -51,8 +51,12 @@ bool OverlayWindow::start(DiskMonitor& monitor, Recorder& recorder) {
     m_switchBack = false;
     m_running    = true;
 
+    // Start IOPS & queue depth monitoring thread (500ms polling)
+    m_iopsMonitor.start(500);
+
     m_hThread = CreateThread(nullptr, 0, threadProc, this, 0, &m_threadId);
     if (!m_hThread) {
+        m_iopsMonitor.stop();
         m_running = false;
         return false;
     }
@@ -62,6 +66,9 @@ bool OverlayWindow::start(DiskMonitor& monitor, Recorder& recorder) {
 // ── Stop ────────────────────────────────────────────────────────────
 void OverlayWindow::stop() {
     m_running = false;
+
+    // Stop IOPS monitor thread — release all resources
+    m_iopsMonitor.stop();
 
     // Post WM_CLOSE to the window to unblock GetMessage
     if (m_hwnd) {
@@ -161,6 +168,12 @@ bool OverlayWindow::updateContent() {
     auto stats = m_monitor->getSystemStats();
     bool recording = m_recorder ? m_recorder->isRecording() : false;
 
+    // Pull IOPS & queue depth data
+    IopsSnapshot iopsSnap;
+    if (m_iopsMonitor.isRunning()) {
+        iopsSnap = m_iopsMonitor.getSnapshot();
+    }
+
     bool changed = false;
     {
         std::lock_guard<std::mutex> lk(m_snapMutex);
@@ -171,7 +184,12 @@ bool OverlayWindow::updateContent() {
             m_snapshot.totalWriteBytes != stats.physicalDiskWriteBytes ||
             m_snapshot.activeProcesses != stats.activeProcessCount    ||
             m_snapshot.totalProcesses  != stats.totalProcessCount     ||
-            m_snapshot.isRecording     != recording) {
+            m_snapshot.isRecording     != recording                   ||
+            m_snapshot.readIops        != iopsSnap.readIops           ||
+            m_snapshot.writeIops       != iopsSnap.writeIops          ||
+            m_snapshot.totalIops       != iopsSnap.totalIops          ||
+            m_snapshot.queueDepth      != iopsSnap.queueDepth         ||
+            m_snapshot.iopsValid       != iopsSnap.valid) {
             changed = true;
         }
 
@@ -182,6 +200,12 @@ bool OverlayWindow::updateContent() {
         m_snapshot.activeProcesses = stats.activeProcessCount;
         m_snapshot.totalProcesses  = stats.totalProcessCount;
         m_snapshot.isRecording     = recording;
+
+        m_snapshot.readIops   = iopsSnap.readIops;
+        m_snapshot.writeIops  = iopsSnap.writeIops;
+        m_snapshot.totalIops  = iopsSnap.totalIops;
+        m_snapshot.queueDepth = iopsSnap.queueDepth;
+        m_snapshot.iopsValid  = iopsSnap.valid;
     }
 
     return changed;
@@ -260,42 +284,105 @@ void OverlayWindow::paint(HDC hdc, const RECT& rc) {
     LineTo(memDC, w - 8, 44);
     DeleteObject(sepPen);
 
-    // ── Disk I/O data ──
-    // Layout: Total (cumulative bytes) / Read rate / Write rate
-    uint64_t totalBytes = snap.totalReadBytes + snap.totalWriteBytes;
-
+    // ── Section 1: Disk I/O throughput ──
     {
         SelectObject(memDC, hFontBody);
 
-        // Total (cumulative I/O bytes)
-        SetTextColor(memDC, RGB(180, 180, 185));
-        RECT labelRc = {12, 48, 70, 68};
-        DrawTextW(memDC, L"Total:", -1, &labelRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-
-        SetTextColor(memDC, RGB(220, 220, 255));
-        RECT totalRc = {72, 48, w - 12, 68};
-        std::wstring totalStr = fmtBytes(totalBytes);
-        DrawTextW(memDC, totalStr.c_str(), -1, &totalRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        // Section label
+        SetTextColor(memDC, RGB(0, 200, 220));
+        RECT sec1Rc = {12, 48, w - 12, 64};
+        DrawTextW(memDC, L"Throughput", -1, &sec1Rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
         // Read rate
         SetTextColor(memDC, RGB(180, 180, 185));
-        RECT rLabelRc = {12, 70, 70, 90};
+        RECT rLabelRc = {12, 66, 60, 82};
         DrawTextW(memDC, L"Read:", -1, &rLabelRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
         SetTextColor(memDC, RGB(80, 180, 255));
-        RECT rValRc = {72, 70, w - 12, 90};
+        RECT rValRc = {62, 66, w - 12, 82};
         std::wstring readStr = fmtRate(snap.totalReadRate);
         DrawTextW(memDC, readStr.c_str(), -1, &rValRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
         // Write rate
         SetTextColor(memDC, RGB(180, 180, 185));
-        RECT wLabelRc = {12, 92, 70, 112};
+        RECT wLabelRc = {12, 84, 60, 100};
         DrawTextW(memDC, L"Write:", -1, &wLabelRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
         SetTextColor(memDC, RGB(255, 160, 60));
-        RECT wValRc = {72, 92, w - 12, 112};
+        RECT wValRc = {62, 84, w - 12, 100};
         std::wstring writeStr = fmtRate(snap.totalWriteRate);
         DrawTextW(memDC, writeStr.c_str(), -1, &wValRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    }
+
+    // ── Separator 2 ──
+    HPEN sepPen2 = CreatePen(PS_SOLID, 1, RGB(50, 53, 55));
+    SelectObject(memDC, sepPen2);
+    MoveToEx(memDC, 8, 108, nullptr);
+    LineTo(memDC, w - 8, 108);
+    DeleteObject(sepPen2);
+
+    // ── Section 2: IOPS & Queue Depth ──
+    {
+        // Section label
+        SetTextColor(memDC, RGB(0, 200, 220));
+        SelectObject(memDC, hFontBody);
+        RECT sec2Rc = {12, 112, w - 12, 128};
+        DrawTextW(memDC, L"IOPS & Queue", -1, &sec2Rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+        if (snap.iopsValid) {
+            SelectObject(memDC, hFontBody);
+
+            // Total IOPS
+            SetTextColor(memDC, RGB(180, 180, 185));
+            RECT iopsLabelRc = {12, 130, 70, 146};
+            DrawTextW(memDC, L"IOPS:", -1, &iopsLabelRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+            SetTextColor(memDC, RGB(220, 220, 255));
+            RECT iopsValRc = {72, 130, w - 12, 146};
+            wchar_t iopsBuf[64];
+            swprintf(iopsBuf, 64, L"%.0f (R:%.0f W:%.0f)", snap.totalIops, snap.readIops, snap.writeIops);
+            DrawTextW(memDC, iopsBuf, -1, &iopsValRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+            // Queue Depth
+            SetTextColor(memDC, RGB(180, 180, 185));
+            RECT qdLabelRc = {12, 148, 70, 164};
+            DrawTextW(memDC, L"Queue:", -1, &qdLabelRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+            // Color-code queue depth: green < 1, yellow 1-5, red > 5
+            COLORREF qdColor;
+            if (snap.queueDepth < 1.0)       qdColor = RGB(80, 220, 80);
+            else if (snap.queueDepth < 5.0)  qdColor = RGB(220, 200, 60);
+            else                             qdColor = RGB(255, 60, 60);
+            SetTextColor(memDC, qdColor);
+            RECT qdValRc = {72, 148, w - 12, 164};
+            wchar_t qdBuf[64];
+            swprintf(qdBuf, 64, L"%.2f", snap.queueDepth);
+            DrawTextW(memDC, qdBuf, -1, &qdValRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        } else {
+            // IOPS data not yet available (initializing)
+            SetTextColor(memDC, RGB(100, 100, 105));
+            SelectObject(memDC, hFontSmall);
+            RECT initRc = {12, 130, w - 12, 164};
+            DrawTextW(memDC, L"Initializing...", -1, &initRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        }
+    }
+
+    // ── Footer: total cumulative bytes ──
+    {
+        uint64_t totalBytes = snap.totalReadBytes + snap.totalWriteBytes;
+
+        // Separator
+        HPEN sepPen3 = CreatePen(PS_SOLID, 1, RGB(50, 53, 55));
+        SelectObject(memDC, sepPen3);
+        MoveToEx(memDC, 8, 172, nullptr);
+        LineTo(memDC, w - 8, 172);
+        DeleteObject(sepPen3);
+
+        SetTextColor(memDC, RGB(140, 140, 145));
+        SelectObject(memDC, hFontSmall);
+        RECT footRc = {12, 174, w - 12, 192};
+        std::wstring totalStr = L"Cumulative: " + fmtBytes(totalBytes);
+        DrawTextW(memDC, totalStr.c_str(), -1, &footRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     }
 
     // ── Cleanup ──

@@ -20,6 +20,7 @@ set(SOURCES
     src/Display.cpp
     src/Recorder.cpp
     src/OverlayWindow.cpp
+    src/IopsMonitor.cpp
 )
 
 set(HEADERS
@@ -27,6 +28,7 @@ set(HEADERS
     src/Display.h
     src/Recorder.h
     src/OverlayWindow.h
+    src/IopsMonitor.h
 )
 
 add_executable(iomonitor ${SOURCES} ${HEADERS})
