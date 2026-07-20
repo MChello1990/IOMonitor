@@ -146,6 +146,12 @@
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\Monitor.cpp" />
     <ClCompile Include="src\Display.cpp" />
+    <ClCompile Include="src\Recorder.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\Monitor.h" />
+    <ClInclude Include="src\Display.h" />
+    <ClInclude Include="src\Recorder.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

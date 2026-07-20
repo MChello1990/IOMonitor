@@ -133,7 +133,7 @@ std::wstring ConsoleDisplay::truncate(const std::wstring& s, size_t maxLen) cons
 }
 
 // ── main loop (on-demand refresh, no pagination) ────────────────────
-void ConsoleDisplay::run(DiskMonitor& monitor) {
+void ConsoleDisplay::run(DiskMonitor& monitor, Recorder& recorder) {
     setupConsole();
     m_running   = true;
     m_startTime = std::chrono::steady_clock::now();
@@ -145,7 +145,7 @@ void ConsoleDisplay::run(DiskMonitor& monitor) {
         renderHeader(stats);
         int dataRows = m_consoleH - m_headerLines - 1;
         renderProcessRows(procs, dataRows);
-        renderFooter(monitor.getSampleInterval());
+        renderFooter(monitor.getSampleInterval(), recorder.isRecording());
     }
 
     while (m_running) {
@@ -155,7 +155,7 @@ void ConsoleDisplay::run(DiskMonitor& monitor) {
         auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(m_refreshMs);
         while (std::chrono::steady_clock::now() < deadline && m_running) {
             if (_kbhit()) {
-                if (!handleInput(monitor)) {
+                if (!handleInput(monitor, recorder)) {
                     restoreConsole();
                     return;
                 }
@@ -171,6 +171,11 @@ void ConsoleDisplay::run(DiskMonitor& monitor) {
             monitor.clearNewDataFlag();
             auto procs = monitor.getProcesses(m_sortMode, static_cast<size_t>(m_maxDisplay));
             auto stats = monitor.getSystemStats();
+
+            // Enqueue sample for CSV recording if active
+            if (recorder.isRecording()) {
+                recorder.enqueueSample(procs);
+            }
 
             // Handle console resize
             CONSOLE_SCREEN_BUFFER_INFO csbi{};
@@ -193,7 +198,7 @@ void ConsoleDisplay::run(DiskMonitor& monitor) {
             renderHeader(stats);
             int dataRows = m_consoleH - m_headerLines - 1;
             renderProcessRows(procs, dataRows);
-            renderFooter(monitor.getSampleInterval());
+            renderFooter(monitor.getSampleInterval(), recorder.isRecording());
 
             m_prevProcs = procs;
         }
@@ -202,7 +207,7 @@ void ConsoleDisplay::run(DiskMonitor& monitor) {
 }
 
 // ── keyboard input ──────────────────────────────────────────────────
-bool ConsoleDisplay::handleInput(DiskMonitor& monitor) {
+bool ConsoleDisplay::handleInput(DiskMonitor& monitor, Recorder& recorder) {
     int ch = _getch();
     if (ch == 0 || ch == 224) { _getch(); return true; }
 
@@ -214,6 +219,16 @@ bool ConsoleDisplay::handleInput(DiskMonitor& monitor) {
     case 's': case 'S': m_sortMode = SortMode::SESSION_TOTAL; break;
     case 'p': case 'P': m_sortMode = SortMode::PROCESS_TOTAL; break;
     case 'c': case 'C': monitor.resetSessionTotals();         break;
+    case 'o': case 'O':
+        // Toggle CSV recording
+        if (recorder.isRecording()) {
+            recorder.stop();
+        } else {
+            if (!recorder.start()) {
+                // Could not start — silently ignore (footer will still show OFF)
+            }
+        }
+        break;
     case '+': case '=': if (m_maxDisplay < 100) m_maxDisplay += 5;   break;
     case '-': case '_': if (m_maxDisplay > 5)   m_maxDisplay -= 5;   break;
     case '[': if (m_refreshMs > 100)  m_refreshMs -= 100; break;
@@ -412,7 +427,7 @@ void ConsoleDisplay::renderProcessRows(const std::vector<ProcessIOData>& procs, 
 }
 
 // ── footer ──────────────────────────────────────────────────────────
-void ConsoleDisplay::renderFooter(int sampleMs) {
+void ConsoleDisplay::renderFooter(int sampleMs, bool isRecording) {
     int innerW = m_consoleW - 2;
 
     // Separator above footer
@@ -423,12 +438,22 @@ void ConsoleDisplay::renderFooter(int sampleMs) {
         L"Total Rate", L"Read Rate", L"Write Rate",
         L"Session IO", L"Session Rd", L"Session Wr", L"Process IO"
     };
-    wchar_t tmp[256];
-    swprintf(tmp, 256,
-             L" Sort: %s  |  Show: %d  |  Sample: %dms / Refresh: %dms  |  "
-             L"[Q]uit [R][W][T][S][P] [C]lear +/- [ ]Speed 1-5",
+
+    // Recording status indicator
+    std::wstring recStatus;
+    if (isRecording) {
+        recStatus = std::wstring(C::RED) + L"REC" + C::RST; // REC (red )
+    } else {
+        recStatus = std::wstring(C::GRAY) + L"REC" + C::RST; // REC (gray )
+    }
+
+    wchar_t tmp[512];
+    swprintf(tmp, 512,
+             L" Sort: %s  |  Show: %d  |  Sample: %dms / Refresh: %dms  |  %s  |  "
+             L"[Q]uit [R][W][T][S][P] [C]lear [O]Record +/- [ ]Speed 1-5",
              sortNames[static_cast<int>(m_sortMode)],
-             m_maxDisplay, sampleMs, m_refreshMs);
+             m_maxDisplay, sampleMs, m_refreshMs,
+             recStatus.c_str());
     std::wstring ft = tmp;
     if (static_cast<int>(ft.size()) > innerW - 2)
         ft = ft.substr(0, static_cast<size_t>(innerW) - 2);

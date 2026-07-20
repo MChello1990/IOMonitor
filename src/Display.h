@@ -8,6 +8,7 @@
 #endif
 #include <windows.h>
 #include "Monitor.h"
+#include "Recorder.h"
 #include <string>
 #include <atomic>
 #include <chrono>
@@ -17,7 +18,7 @@ public:
     ConsoleDisplay();
     ~ConsoleDisplay();
 
-    void run(DiskMonitor& monitor);
+    void run(DiskMonitor& monitor, Recorder& recorder);
 
     void setRefreshMs(int ms)  { if (ms >= 100 && ms <= 2000) m_refreshMs = ms; }
     void setMaxDisplay(int n)  { if (n >= 5 && n <= 100) m_maxDisplay = n; }
@@ -28,8 +29,8 @@ private:
 
     void renderHeader(const SystemIOStats& stats);
     void renderProcessRows(const std::vector<ProcessIOData>& procs, int maxDataRows);
-    void renderFooter(int sampleMs);
-    bool handleInput(DiskMonitor& monitor);
+    void renderFooter(int sampleMs, bool isRecording);
+    bool handleInput(DiskMonitor& monitor, Recorder& recorder);
 
     std::wstring fmtRate(double bytesPerSec) const;
     std::wstring fmtBytes(uint64_t bytes) const;

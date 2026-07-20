@@ -24,12 +24,18 @@
     <ClCompile Include="src\Display.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="src\Recorder.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\Monitor.h">
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="src\Display.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Recorder.h">
       <Filter>头文件</Filter>
     </ClInclude>
   </ItemGroup>

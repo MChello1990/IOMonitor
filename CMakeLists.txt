@@ -18,11 +18,13 @@ set(SOURCES
     src/main.cpp
     src/Monitor.cpp
     src/Display.cpp
+    src/Recorder.cpp
 )
 
 set(HEADERS
     src/Monitor.h
     src/Display.h
+    src/Recorder.h
 )
 
 add_executable(iomonitor ${SOURCES} ${HEADERS})
