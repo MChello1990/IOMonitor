@@ -2,9 +2,9 @@ name: Build and Test
 
 on:
   push:
-    branches: [ "AutoCompile" ]
+    branches: [ "master" ]
   pull_request:
-    branches: [ "AutoCompile" ]
+    branches: [ "master" ]
 
 env:
   BUILD_TYPE: Release
