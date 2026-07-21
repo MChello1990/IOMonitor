@@ -33,16 +33,25 @@ jobs:
         run: |
           $tag = "${{ github.event.inputs.tag || github.ref_name }}"
           $changelog = Get-Content -Path CHANGELOG.md -Raw
-          if ($changelog -match "## \[$tag\].*?(?:\r?\n## \[|$)") {
-          $notes = $matches[0] -replace "## \[$tag\]", "" -replace "\r?\n## \[.*", ""
-          $notes.Trim() | Out-File -FilePath release-notes.md -Encoding utf8
-          echo "has_notes=true" >> $env:GITHUB_OUTPUT
-          } else {
-          Write-Host "::warning::No changelog entry found for $tag"
-          echo "has_notes=false" >> $env:GITHUB_OUTPUT
-          }
-        shell: pwsh
 
+          $entries = $changelog -split '## \['
+          $notes = $null
+          foreach ($entry in $entries) {
+              if ($entry -match "^$tag\]") {
+                  $notes = $entry -replace "^$tag\]\s*.*?(\r?\n|$)", ""
+                  break
+              }
+          }
+
+          if ($notes) {
+              $notes.Trim() | Out-File -FilePath release-notes.md -Encoding utf8
+              echo "has_notes=true" >> $env:GITHUB_OUTPUT
+          } else {
+              Write-Host "::warning::No changelog entry found for $tag"
+              echo "has_notes=false" >> $env:GITHUB_OUTPUT
+          }
+          shell: pwsh
+        
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
