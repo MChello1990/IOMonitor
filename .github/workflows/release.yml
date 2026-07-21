@@ -50,14 +50,14 @@ jobs:
               Write-Host "::warning::No changelog entry found for $tag"
               echo "has_notes=false" >> $env:GITHUB_OUTPUT
           }
-          shell: pwsh
-        
+        shell: pwsh
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           files: build/bin/Release/iomonitor.exe
-          body: ${{ steps.changelog.outputs.notes && fromJSON(steps.changelog.outputs.notes) || '' }}
-          generate_release_notes: ${{ steps.changelog.outputs.notes == '' }}
+          body_path: ${{ steps.changelog.outputs.has_notes == 'true' && 'release-notes.md' || '' }}
+          generate_release_notes: ${{ steps.changelog.outputs.has_notes != 'true' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
