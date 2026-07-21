@@ -4,6 +4,29 @@ This document records all notable changes to the IO Monitor project.
 
 ---
 
+## [v1.6.0] — 2026-07-20
+
+### Added
+
+- **IOPS & Queue Depth Monitoring** — New `IopsMonitor` sub-page module integrated into the advanced monitor (overlay window) framework
+  - Queries `\PhysicalDisk(_Total)\Disk Reads/sec` and `\PhysicalDisk(_Total)\Disk Writes/sec` via PDH for real-time IOPS data
+  - Queries `\PhysicalDisk(_Total)\Current Disk Queue Length` for disk queue depth
+  - Overlay window now features an "IOPS & Queue" display section showing total IOPS (with R/W breakdown) and queue depth
+  - Queue depth uses color coding: Green (<1), Yellow (1–5), Red (>5) for intuitive disk pressure visualization
+- **Resource Optimization Mechanism** — IOPS monitoring thread is fully stopped and destroyed when advanced monitor mode (overlay) is inactive
+  - `IopsMonitor::stop()` sequentially closes thread handle, removes PDH counters, and closes PDH query, ensuring zero background polling
+  - `IopsMonitor::start()` dynamically initializes only when overlay is active, with 500ms sampling interval at lowest thread priority
+- **Overlay UI Restructuring** — Redesigned into three distinct sections: Throughput, IOPS & Queue Depth, Cumulative Bytes
+
+### Changed
+
+- `OverlaySnapshot` struct gains `readIops`, `writeIops`, `totalIops`, `queueDepth`, `iopsValid` fields
+- `OverlayWindow` dimensions expanded from 280×130 to 300×200 to accommodate new data sections
+- `OverlayWindow::start()` launches IOPS monitor before creating the overlay window, with automatic rollback on failure
+- `OverlayWindow::stop()` stops the IOPS monitor thread immediately after overlay destruction
+
+---
+
 ## [v1.0.0] — 2026-07-20
 
 ### 🚀 Added

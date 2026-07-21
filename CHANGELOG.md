@@ -4,7 +4,30 @@
 
 ---
 
-## [v1.5.0] — 2026-07-20
+## [v1.6.0]
+
+### Added
+
+- **IOPS 与队列深度监控** — 新增 `IopsMonitor` 独立子页面模块，集成至高级监视页面（悬浮窗）框架
+  - 通过 PDH 查询 `\PhysicalDisk(_Total)\Disk Reads/sec`、`\PhysicalDisk(_Total)\Disk Writes/sec` 获取实时 IOPS 数据
+  - 通过 `\PhysicalDisk(_Total)\Current Disk Queue Length` 获取磁盘队列深度
+  - 悬浮窗新增 "IOPS & Queue" 显示区域，展示总 IOPS（含读/写细分）及队列深度
+  - 队列深度采用颜色编码：绿色（<1）、黄色（1-5）、红色（>5），直观反映磁盘压力
+- **资源优化机制** — 高级监视模式（悬浮窗）关闭时，IOPS 监视线程完全停止并销毁
+  - `IopsMonitor::stop()` 依次关闭线程句柄、移除 PDH 计数器、关闭 PDH 查询，确保零后台轮询
+  - `IopsMonitor::start()` 仅在悬浮窗激活时动态初始化，采样间隔 500ms，最低优先级线程
+- **悬浮窗界面重构** — 重新设计为三个清晰区域：吞吐量（Throughput）、IOPS 与队列深度、累计字节数
+
+### Changed
+
+- `OverlaySnapshot` 结构体新增 `readIops`、`writeIops`、`totalIops`、`queueDepth`、`iopsValid` 字段
+- `OverlayWindow` 悬浮窗尺寸从 280×130 扩大为 300×200，以容纳新增数据区域
+- `OverlayWindow::start()` 在创建悬浮窗前启动 IOPS 监控，失败时自动回滚
+- `OverlayWindow::stop()` 在销毁悬浮窗后立即停止 IOPS 监控线程
+
+---
+
+## [v1.5.0]
 
 ### 新增功能
 
