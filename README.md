@@ -1,6 +1,6 @@
 # IO Monitor — 硬盘 I/O 使用状况监视工具
 
-[简体中文](README.md) | [English](README_EN.md)
+[简体中文](README.md) | [English](README_EN.md) | [CSV文件查看器](https://github.com/MChello1990/CSVReader)
 ## 概述
 
 IO Monitor 是一款 Windows 平台下的硬盘 I/O 监视工具。它能够实时监控每个进程的磁盘读写情况，生成速率排行与会话累计统计，并以彩色控制台界面（CUI）展示。
