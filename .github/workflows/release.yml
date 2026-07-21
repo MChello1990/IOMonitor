@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to release (e.g. v1.0.0)'
+        description: 'Tag to release (e.g. v1.5.0)'
         required: true
 
 env:
@@ -16,28 +16,41 @@ env:
 jobs:
   release:
     runs-on: windows-latest
-
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-      with:
-        ref: ${{ github.event.inputs.tag || github.ref }}
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
-    - name: Configure CMake
-      run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
+      - name: Configure CMake
+        run: cmake -B build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
 
-    - name: Build
-      run: cmake --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}}
+      - name: Build
+        run: cmake --build build --config ${{env.BUILD_TYPE}}
 
-    - name: List build output (debug)
-      run: Get-ChildItem -Path ${{github.workspace}}/build -Recurse -Name
-      shell: pwsh
+      - name: Extract release notes
+        id: changelog
+        run: |
+          $tag = "${{ github.event.inputs.tag || github.ref_name }}"
+          $version = $tag -replace '^v', ''
+          $changelog = Get-Content -Path CHANGELOG.md -Raw
+          if ($changelog -match "## \[$version\].*?(?:\r?\n## \[|$)") {
+            $notes = $matches[0] -replace "## \[$version\]", "" -replace "\r?\n## \[.*", ""
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes($notes.Trim())
+            $encoded = [Convert]::ToBase64String($bytes)
+            echo "notes=$encoded" >> $env:GITHUB_OUTPUT
+          } else {
+            echo "::warning::No changelog entry found for $version"
+            echo "notes=" >> $env:GITHUB_OUTPUT
+          }
+        shell: pwsh
 
-    - name: Create Release
-      uses: softprops/action-gh-release@v2
-      with:
-        tag_name: ${{ github.event.inputs.tag || github.ref_name }}
-        files: ${{github.workspace}}/build/bin/Release/iomonitor.exe
-        generate_release_notes: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: build/bin/Release/iomonitor.exe
+          body: ${{ steps.changelog.outputs.notes && fromJSON(steps.changelog.outputs.notes) || '' }}
+          generate_release_notes: ${{ steps.changelog.outputs.notes == '' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
