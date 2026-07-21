@@ -32,16 +32,14 @@ jobs:
         id: changelog
         run: |
           $tag = "${{ github.event.inputs.tag || github.ref_name }}"
-          $version = $tag -replace '^v', ''
           $changelog = Get-Content -Path CHANGELOG.md -Raw
-          if ($changelog -match "## \[$version\].*?(?:\r?\n## \[|$)") {
-            $notes = $matches[0] -replace "## \[$version\]", "" -replace "\r?\n## \[.*", ""
-            $bytes = [System.Text.Encoding]::UTF8.GetBytes($notes.Trim())
-            $encoded = [Convert]::ToBase64String($bytes)
-            echo "notes=$encoded" >> $env:GITHUB_OUTPUT
+          if ($changelog -match "## \[$tag\].*?(?:\r?\n## \[|$)") {
+          $notes = $matches[0] -replace "## \[$tag\]", "" -replace "\r?\n## \[.*", ""
+          $notes.Trim() | Out-File -FilePath release-notes.md -Encoding utf8
+          echo "has_notes=true" >> $env:GITHUB_OUTPUT
           } else {
-            echo "::warning::No changelog entry found for $version"
-            echo "notes=" >> $env:GITHUB_OUTPUT
+          Write-Host "::warning::No changelog entry found for $tag"
+          echo "has_notes=false" >> $env:GITHUB_OUTPUT
           }
         shell: pwsh
 
