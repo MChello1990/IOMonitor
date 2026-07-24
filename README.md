@@ -236,6 +236,9 @@ iomonitor.exe --help
 
 项目通过本地自动化测试，覆盖单元测试、集成测试和报告生成，确保核心功能的稳定性和正确性。
 
+## 特别鸣谢
+
+本项目 SMART 硬盘健康监控模块的数据模型（`SmartDataModel.h`）参考了 [smartmontools](https://github.com/smartmontools/smartmontools) 的结构体设计（包括 ATA SMART 属性结构、NVMe SMART/Health Information Log 结构等），对此表示诚挚的感谢。smartmontools 是一个优秀的开源硬盘 S.M.A.R.T. 监控工具，感谢其开放源代码，为本项目的 SMART 功能实现提供了宝贵的参考。
 
 ## 常见问题
 
