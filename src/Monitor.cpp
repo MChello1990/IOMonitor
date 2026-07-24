@@ -83,19 +83,20 @@ void DiskMonitor::sample() {
     // Accumulate cumulative bytes from rate × elapsed time
     // (PDH does not expose a direct cumulative-bytes counter for PhysicalDisk)
     {
-        static auto s_lastSampleTime = std::chrono::steady_clock::now();
-        static uint64_t s_accReadBytes = 0;
-        static uint64_t s_accWriteBytes = 0;
+        // NOTE: Using member variables instead of static locals to avoid
+        // cross-instance sharing if multiple DiskMonitor instances exist.
+        // The per-instance accumulation is safe since sample() is called
+        // from a single dedicated thread per monitor instance.
+        auto& lastSampleTime = m_lastSampleTime;
+        auto& accReadBytes    = m_accumReadBytes;
+        auto& accWriteBytes   = m_accumWriteBytes;
 
-        double elapsed = std::chrono::duration<double>(now - s_lastSampleTime).count();
+        double elapsed = std::chrono::duration<double>(now - lastSampleTime).count();
         if (elapsed > 0.0 && elapsed < 300.0) { // guard against huge gaps
-            s_accReadBytes  += static_cast<uint64_t>(pdhReadRate * elapsed);
-            s_accWriteBytes += static_cast<uint64_t>(pdhWriteRate * elapsed);
+            accReadBytes  += static_cast<uint64_t>(pdhReadRate * elapsed);
+            accWriteBytes += static_cast<uint64_t>(pdhWriteRate * elapsed);
         }
-        s_lastSampleTime = now;
-
-        m_accumReadBytes  = s_accReadBytes;
-        m_accumWriteBytes = s_accWriteBytes;
+        lastSampleTime = now;
     }
 
     HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);

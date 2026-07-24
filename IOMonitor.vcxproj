@@ -149,6 +149,14 @@
     <ClCompile Include="src\Recorder.cpp" />
     <ClCompile Include="src\OverlayWindow.cpp" />
     <ClCompile Include="src\IopsMonitor.cpp" />
+    <ClCompile Include="src\SmartDataModel.cpp" />
+    <ClCompile Include="src\SmartReaderBase.cpp" />
+    <ClCompile Include="src\SmartReaderAta.cpp" />
+    <ClCompile Include="src\SmartReaderNvme.cpp" />
+    <ClCompile Include="src\SmartReaderScsi.cpp" />
+    <ClCompile Include="src\SmartMonitor.cpp" />
+    <ClCompile Include="src\SmartOverlayWindow.cpp" />
+    <ClCompile Include="src\SmartDebugWindow.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\Monitor.h" />
@@ -156,6 +164,15 @@
     <ClInclude Include="src\Recorder.h" />
     <ClInclude Include="src\OverlayWindow.h" />
     <ClInclude Include="src\IopsMonitor.h" />
+    <ClInclude Include="src\SmartDataModel.h" />
+    <ClInclude Include="src\SmartReaderBase.h" />
+    <ClInclude Include="src\SmartReaderNvme.h" />
+    <ClInclude Include="src\SmartReaderAta.h" />
+    <ClInclude Include="src\SmartReaderScsi.h" />
+    <ClInclude Include="src\SmartMonitor.h" />
+    <ClInclude Include="src\SmartOverlayWindow.h" />
+    <ClInclude Include="src\SmartDebug.h" />
+    <ClInclude Include="src\SmartDebugWindow.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

@@ -113,6 +113,7 @@ private:
     // cumulative counter for PhysicalDisk; we sum rate × elapsed time)
     uint64_t m_accumReadBytes = 0;
     uint64_t m_accumWriteBytes = 0;
+    std::chrono::steady_clock::time_point m_lastSampleTime{std::chrono::steady_clock::now()};
 
     std::atomic<bool> m_running{false};
     std::atomic<bool> m_hasNewData{false};

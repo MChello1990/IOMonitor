@@ -33,6 +33,27 @@
     <ClCompile Include="src\IopsMonitor.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="src\SmartMonitor.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="src\SmartOverlayWindow.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="src\SmartReaderBase.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="src\SmartReaderNvme.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="src\SmartReaderAta.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="src\SmartReaderScsi.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="src\SmartDebugWindow.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\Monitor.h">
@@ -48,6 +69,33 @@
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="src\IopsMonitor.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="src\SmartDataModel.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="src\SmartReaderBase.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="src\SmartReaderNvme.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="src\SmartReaderAta.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="src\SmartReaderScsi.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="src\SmartMonitor.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="src\SmartOverlayWindow.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="src\SmartDebug.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="src\SmartDebugWindow.h">
       <Filter>头文件</Filter>
     </ClInclude>
   </ItemGroup>

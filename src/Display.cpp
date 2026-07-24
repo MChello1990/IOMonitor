@@ -1,4 +1,5 @@
 #include "Display.h"
+#include "SmartMonitor.h"
 #include <conio.h>
 #include <cstdio>
 #include <algorithm>
@@ -162,6 +163,17 @@ void ConsoleDisplay::run(DiskMonitor& monitor, Recorder& recorder) {
             }
         }
 
+        // Check if SMART monitor page was requested
+        if (m_smartMonitorRequested) {
+            m_smartMonitorRequested = false;
+            if (enterSmartMonitorMode(monitor, recorder)) {
+                // SMART monitor closed — restore full console
+                for (auto& rc : m_rowCache) rc.valid = false;
+                write(CLS);
+                continue;
+            }
+        }
+
         bool needRender = false;
 
         // Wait for new data or user input
@@ -248,6 +260,11 @@ bool ConsoleDisplay::handleInput(DiskMonitor& monitor, Recorder& recorder) {
         m_overlayModeRequested = true;
         return true;
     }
+    case 'd': case 'D': {
+        // Open SMART disk health monitor sub-page
+        m_smartMonitorRequested = true;
+        return true;
+    }
     case '+': case '=': if (m_maxDisplay < 100) m_maxDisplay += 5;   break;
     case '-': case '_': if (m_maxDisplay > 5)   m_maxDisplay -= 5;   break;
     case '[': if (m_refreshMs > 100)  m_refreshMs -= 100; break;
@@ -276,7 +293,7 @@ void ConsoleDisplay::renderHeader(const SystemIOStats& stats) {
     {
         wchar_t tmp[256];
         swprintf(tmp, 256,
-                 L"  IO Monitor v1.5   |   Up: %s   |   Active: %d / %d   |   "
+                 L"  IO Monitor v2.0   |   Up: %s   |   Active: %d / %d   |   "
                  L"Disk: R %s  W %s",
                  fmtTime(uptime).c_str(),
                  stats.activeProcessCount, stats.totalProcessCount,
@@ -545,4 +562,30 @@ bool ConsoleDisplay::enterOverlayMode(DiskMonitor& monitor, Recorder& recorder) 
 
 void ConsoleDisplay::exitOverlayMode() {
     m_overlay.stop();
+}
+
+// ── SMART Monitor sub-page ───────────────────────────────────────────
+bool ConsoleDisplay::enterSmartMonitorMode(DiskMonitor& monitor, Recorder& recorder) {
+    // Clear the console screen
+    write(std::wstring(CLS) + SHOW_CUR);
+
+    // Hide the console window while SMART page is active
+    HWND hConsole = GetConsoleWindow();
+    ShowWindow(hConsole, SW_HIDE);
+
+    // Create and show the SMART monitor
+    SmartMonitor smartMon;
+    smartMon.show();
+
+    // Restore console window
+    ShowWindow(hConsole, SW_SHOW);
+    SetForegroundWindow(hConsole);
+
+    // Restore console state
+    DWORD mode = m_oldOutMode | ENABLE_VIRTUAL_TERMINAL_PROCESSING | DISABLE_NEWLINE_AUTO_RETURN;
+    SetConsoleMode(m_hOut, mode);
+    SetConsoleOutputCP(CP_UTF8);
+    write(HIDE_CUR);
+
+    return m_running.load();
 }

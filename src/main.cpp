@@ -25,7 +25,7 @@ static BOOL WINAPI ctrlHandler(DWORD type) {
 }
 
 static void printHelp() {
-    wprintf(L"\n  IO Monitor  —  Disk I/O Usage Monitor v1.0\n\n");
+    wprintf(L"\n  IO Monitor  —  Disk I/O Usage Monitor v2.0\n\n");
     wprintf(L"  Usage:  iomonitor [options]\n\n");
     wprintf(L"  Options:\n");
     wprintf(L"    -s, --sample N     Sampling interval in ms   (default: 1000, range: 200-10000)\n");
@@ -43,6 +43,7 @@ static void printHelp() {
     wprintf(L"    C                Clear session totals\n");
     wprintf(L"    O                Toggle CSV recording on/off\n");
     wprintf(L"    M                Toggle overlay mini-window (always-on-top, 25%% opaque)\n");
+    wprintf(L"    D                Open SMART disk health monitor sub-page\n");
     wprintf(L"    1-5              Sample speed presets (200/500/1000/2000/5000 ms)\n");
     wprintf(L"    +/-              Increase / decrease displayed process count\n");
     wprintf(L"    [ / ]            Adjust display refresh speed\n\n");

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(IOMonitor VERSION 1.0.0 LANGUAGES CXX)
+project(IOMonitor VERSION 2.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -21,6 +21,14 @@ set(SOURCES
     src/Recorder.cpp
     src/OverlayWindow.cpp
     src/IopsMonitor.cpp
+    src/SmartDataModel.cpp
+    src/SmartReaderBase.cpp
+    src/SmartReaderAta.cpp
+    src/SmartReaderNvme.cpp
+    src/SmartReaderScsi.cpp
+    src/SmartMonitor.cpp
+    src/SmartOverlayWindow.cpp
+    src/SmartDebugWindow.cpp
 )
 
 set(HEADERS
@@ -29,11 +37,20 @@ set(HEADERS
     src/Recorder.h
     src/OverlayWindow.h
     src/IopsMonitor.h
+    src/SmartDataModel.h
+    src/SmartReaderBase.h
+    src/SmartReaderAta.h
+    src/SmartReaderNvme.h
+    src/SmartReaderScsi.h
+    src/SmartMonitor.h
+    src/SmartOverlayWindow.h
+    src/SmartDebug.h
+    src/SmartDebugWindow.h
 )
 
 add_executable(iomonitor ${SOURCES} ${HEADERS})
 target_include_directories(iomonitor PRIVATE src)
-target_link_libraries(iomonitor PRIVATE pdh psapi)
+target_link_libraries(iomonitor PRIVATE pdh psapi setupapi)
 
 set_target_properties(iomonitor PROPERTIES
     WIN32_EXECUTABLE OFF

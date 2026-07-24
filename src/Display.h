@@ -37,6 +37,9 @@ private:
     bool enterOverlayMode(DiskMonitor& monitor, Recorder& recorder);
     void exitOverlayMode();
 
+    // SMART monitor sub-page
+    bool enterSmartMonitorMode(DiskMonitor& monitor, Recorder& recorder);
+
     std::wstring fmtRate(double bytesPerSec) const;
     std::wstring fmtBytes(uint64_t bytes) const;
     std::wstring fmtTime(int64_t seconds) const;
@@ -58,20 +61,21 @@ private:
 
     int m_consoleW = 120;
     int m_consoleH = 40;
-    int m_headerLines = 6;   // rows used by header block (1-indexed)
+    int m_headerLines = 6;
     int m_footerLine  = 0;
 
-    // Track previous row contents for differential (on-demand) update
     struct RowCache {
         std::wstring content;
         bool valid = false;
     };
     std::vector<RowCache> m_rowCache;
 
-    // Previous sample data for rate change indicators
     std::vector<ProcessIOData> m_prevProcs;
 
     // Overlay window
     OverlayWindow m_overlay;
     bool m_overlayModeRequested = false;
+
+    // SMART monitor request flag
+    bool m_smartMonitorRequested = false;
 };
