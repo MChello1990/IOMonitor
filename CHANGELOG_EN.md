@@ -4,6 +4,54 @@ This document records all notable changes to the IO Monitor project.
 
 ---
 
+## [v3.0.0] — 2026-09-24
+
+This is a MAJOR release: the S.M.A.R.T. acquisition layer is replaced wholesale, from the in-house smartmontools-style readers to a CrystalDiskInfo port. It is an architectural swap, hence the major version. The `SmartDataModel` contract and all rendering and interaction code are unchanged.
+
+### Added
+
+- **`--smart-dump`** — A command-line switch that prints each disk's model, serial, firmware, interface, capacity, health verdict and full attribute table, followed by what the GUI adapter sees, for on-machine verification and troubleshooting.
+
+### Refactoring
+
+- **S.M.A.R.T. acquisition replaced by a CrystalDiskInfo port** — Removed the smartmontools-derived `SmartReaderBase` / `SmartReaderAta` / `SmartReaderNvme` / `SmartReaderScsi` (8 files). Disk enumeration, identification and S.M.A.R.T. reading are now handled by `CdiSmart*.h/cpp`, a port of CrystalDiskInfo's [`CAtaSmart`](https://github.com/hiyohiyo/CrystalDiskInfo) (MIT License). Scope is the mainstream Windows 10 / 11 paths: `IOCTL_ATA_PASS_THROUGH`, `DFP_RECEIVE_DRIVE_DATA`, `IOCTL_IDE_PASS_THROUGH`, SCSI ATA PASS-THROUGH (12) (SAT), the legacy `SMART_RCV_DRIVE_DATA` fallback, and NVMe via `IOCTL_STORAGE_QUERY_PROPERTY`. Vendor-private NVMe tunnels (Samsung, Intel RST/VROC, JMicron, ASMedia, Realtek RAID, MegaRAID, CSMI, AMD-RC2, Silicon Image) and INI-driven rules are out of scope.
+- **Adapter layer and unit split** — The acquisition layer is split into 7 translation units (core / acquisition paths / attribute parsing / vendor detection / status verdict / NVMe interpreter / shared support), plus a new `SmartCdiAdapter` mapping `cdi::DRIVE_INFO` onto the GUI's `DiskIdentity` / `SmartAttribute` / `SmartDataSnapshot`. `SmartDataModel` and all rendering code are unchanged.
+
+### Improvements
+
+- **SMART Attributes moved to a full-width table** — The table has six columns, but the 340 px right column it used to live in could not hold a row (roughly 500 px of text at the mono font), so the Raw column was clipped away entirely and the hard-coded header never lined up with the rows. The table now occupies its own full-width band along the bottom of the window: each cell is drawn into its own rect (Value / Worst / Thresh right-aligned), the header aligns exactly with the data, over-long values are ellipsised instead of disappearing, and the list scrolls with the mouse wheel when it holds more rows than fit — with a "showing A-B of N" hint next to the title.
+- **Attribute row colour now carries state, not category** — every pre-failure attribute used to be tinted yellow regardless of its value, so healthy drives showed yellow rows that conveyed nothing. Only attributes that have actually reached their threshold are highlighted now.
+- **Vendor detection and health verdict** — CrystalDiskInfo's classification chain (37 predicates covering Samsung / Intel / Micron / SK hynix / Kioxia / WDC / SanDisk / Seagate / Kingston / SiliconMotion / Phison / Marvell / Realtek / YMTC and more) and its `CheckDiskStatus` verdict replace the previous single weighted score.
+- **NVMe attribute naming** — The NVMe SMART log is mapped onto an ATA-style attribute list (IDs 0x01–0x1D) by CrystalDiskInfo's NVMeInterpreter, with names taken from its language file.
+
+### Bug Fixes
+
+- **SMART Attributes page showed three empty NVMe columns** — CrystalDiskInfo's NVMe interpreter fills `Id` and `RawValue` only (NVMe has no ATA-style normalised value / threshold page), so Value, Worst and Thresh stayed 0 and only Raw carried data. The adapter now synthesises those three columns from the NVMe log fields (100 = healthy, 0 = fault, with a threshold wherever the field has one — the same convention the pre-refactor NVMe reader used). Fault rows are highlighted by the existing colouring, and the Critical Warning bit field renders as readable text again (`temperature_high`, `read_only`, …).
+- **NVMe health weights never applied** — `computeHealth` matched the NVMe weights by attribute *name*, but the port names them from CrystalDiskInfo's language table, where the media-error entry is `Media and Data Integrity Errors` rather than `Media Errors`; that weight could never fire. Now matched by NVMe attribute id (0x01 / 0x05 / 0x0D / 0x0E).
+- **NVMe protocol query layout** — Fixed the query structure: CrystalDiskInfo declares its own 8-byte `{PropertyId, QueryType}` rather than the Windows SDK's `STORAGE_PROPERTY_QUERY` (which carries `AdditionalParameters[1]`, `sizeof == 12`). The SDK layout pushes the protocol data four bytes too late and the query is rejected with `ERROR_INVALID_PARAMETER` (87).
+- **NVMe attribute out-of-bounds read** — `CdiAttributeName.cpp` read the six-byte `SMART_ATTRIBUTE::RawValue` with the eight-byte `B8toB64le(const BYTE*)`, picking up the following attribute's Id. Switched to the six-byte array overload, fixing controller-busy-time / power-on-hours / unsafe-shutdowns raw values that displayed as astronomical numbers.
+- **Wide `wprintf`/`swprintf` format specifiers** — `%s` in a wide format string means a *narrow* string under a conforming C runtime (under MinGW with `-municode` it printed only the first byte), so every such site now uses `%ls`; MSVC accepts that spelling too.
+- **Vendor detection and thresholds** — `Threshold05` / `ThresholdC5` / `ThresholdC6` / `ThresholdFF` are seeded with CrystalDiskInfo's INI defaults of 1/1/1/10, so CAUTION reporting is no longer silently disabled.
+
+### Compatibility
+
+- **Windows 11 NVMe fallback** — Some Windows 11 NVMe driver stacks (the Samsung driver, verified on this machine) answer `StorageAdapterProtocolSpecificProperty` (49) with `ERROR_INVALID_FUNCTION` while accepting the device-level `StorageDeviceProtocolSpecificProperty` (50). NVMe queries now try 49 and fall back to 50.
+- **NVMe identity fallback** — The same driver stack serves the SMART health log but returns no Identify Controller payload; identity then comes from the storage descriptor, instead of dropping the drive (and its whole S.M.A.R.T. page).
+- **MinGW builds** — Added the `FILE_DEVICE_SCSI` definition mingw-w64's `ntddscsi.h` lacks, and `_WIN32_WINNT=0x0A00` for MinGW builds.
+
+### Build System
+
+- **Source list swapped** — `CMakeLists.txt` and `IOMonitor.vcxproj` / `.filters` drop the 8 `SmartReader*.cpp/h` files in favour of the 10 acquisition-layer files (`CdiSmart`, `CdiSmartSupport`, `CdiSmartIo`, `CdiSmartFill`, `CdiSmartSsd`, `CdiSmartStatus`, `CdiSmartNvmeInterp`, `CdiAttributeName`, `CdiSmartAttributeTable`) plus `SmartCdiAdapter`.
+- **SDK level aligned** — `_WIN32_WINNT=0x0A00 WINVER=0x0A00` is now defined globally, so the NVMe storage protocol query and `StorageAdapterProtocolSpecificProperty` are declared under both MSVC and MinGW.
+- **Version bumped to `v3.0.0`** — `CMakeLists.txt`'s `project(... VERSION 3.0.0)`, the `main.cpp` help text, the `Display.cpp` title bar and the README screenshot are all updated in step.
+
+### Documentation
+
+- **README brought up to date** — the architecture diagram was redrawn for the new acquisition-layer files, `--smart-dump` was documented, and the compatibility notes (Administrator rights required to read S.M.A.R.T., and how the Windows 10 build relates to the NVMe direct path) were rewritten. A new "Acknowledgements" section credits CrystalDiskInfo (MIT) for the acquisition layer, NVMeInterpreter (MIT) for the NVMe SMART log parsing, and CrystalDiskInfo's `Language/English.lang` as the source of the attribute-name table.
+- **`.gitignore`** — `/build`, `/build-*` and `/.idea/` are now ignored, keeping local build output and IDE settings out of commits.
+
+---
+
 ## [v2.0.0] — 2026-07-24
 
 ### 🐛 Bug Fixes

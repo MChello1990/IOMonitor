@@ -4,6 +4,52 @@
 
 ---
 
+## [v3.0.0] — 2026-09-24
+
+本版为 MAJOR 版本：S.M.A.R.T. 经测试兼容性后决定，采集层由 smartmontools 风格读取器整体替换为 CrystalDiskInfo 移植实现，
+属架构级替换，故走主版本号。`SmartDataModel` 契约与全部渲染、交互代码保持不变。
+
+### 新增功能
+
+- **`--smart-dump`** — 命令行开关，打印每块磁盘的型号、序列号、固件、接口、容量、健康判定与完整属性表，并附上 GUI 适配层看到的结果，便于在真机验证与排障。
+
+### 重构
+
+- **SMART 采集层换成 CrystalDiskInfo 移植实现** — 删除基于 smartmontools 设计的 `SmartReaderBase` / `SmartReaderAta` / `SmartReaderNvme` / `SmartReaderScsi`（共 8 个文件），改由 `CdiSmart*.h/cpp` 承担全部磁盘枚举、识别与 S.M.A.R.T. 读取。移植自 [CrystalDiskInfo](https://github.com/hiyohiyo/CrystalDiskInfo) 的 `CAtaSmart`（MIT License），范围为主流 Windows 10 / 11 通路：`IOCTL_ATA_PASS_THROUGH`、`DFP_RECEIVE_DRIVE_DATA`、`IOCTL_IDE_PASS_THROUGH`、SCSI ATA PASS-THROUGH (12)（SAT）、传统 `SMART_RCV_DRIVE_DATA` 回退，以及经 `IOCTL_STORAGE_QUERY_PROPERTY` 的 NVMe 通路。厂商私有 NVMe 隧道（Samsung、Intel RST/VROC、JMicron、ASMedia、Realtek RAID、MegaRAID、CSMI、AMD-RC2、Silicon Image）与 INI 自定义规则不在移植范围内。
+- **新增适配层与拆分** — 采集层按职责拆为 7 个编译单元（核心 / 采集通路 / 属性解析 / 厂商识别 / 状态判定 / NVMe 解释器 / 共享支撑），并新增 `SmartCdiAdapter` 将 `cdi::DRIVE_INFO` 映射到 GUI 侧的 `DiskIdentity` / `SmartAttribute` / `SmartDataSnapshot`。`SmartDataModel` 与全部渲染代码保持不变。
+
+### 改进
+
+- **SMART Attributes 区改为全宽表格** — 该表有六列，而原先所在的右栏只有 340 px 宽，单行文本约需 500 px，导致 Raw 列被整体裁掉、且硬编码表头与数据行从未对齐。现在表格独占窗口底部一条全宽区域：每列各自绘制到独立的矩形中（Value / Worst / Thresh 右对齐），表头与数据严格对齐，过长的值以省略号收尾而不是消失；表格可容纳的行数不足时支持鼠标滚轮滚动，并在标题右侧显示「showing A-B of N」。
+- **属性行配色改为只表达状态** — 原先所有 pre-failure 属性无论取值一律显示黄色，健康盘上也会出现黄行、不携带任何信息。现在仅在属性真正到达阈值时标红。
+- **厂商识别与健康判定** — 采用 CrystalDiskInfo 的厂商判定链路（37 个识别函数，覆盖 Samsung / Intel / Micron / SK hynix / Kioxia / WDC / SanDisk / Seagate / Kingston / SiliconMotion / Phison / Marvell / Realtek / YMTC 等）及其 `CheckDiskStatus` 判定逻辑，替换原先基于属性加权的单一评分。
+- **NVMe 属性命名** — NVMe SMART 日志按 CrystalDiskInfo 的 NVMeInterpreter 映射为 ATA 风格属性表（ID 0x01–0x1D），属性名取自 CrystalDiskInfo 语言文件。
+
+### Bug 修复
+
+- **SMART Attributes 表 NVMe 三列为空** — CrystalDiskInfo 的 NVMe 解释器只填 `Id` 与 `RawValue`（NVMe 没有 ATA 那样的归一化值与阈值页），因此 Value / Worst / Thresh 三列恒为 0，整页看起来只有 Raw 有数据。适配层现按 NVMe 日志字段合成这三列（100 = 健康，0 = 故障，可用阈值处给出阈值；与替换前的 NVMe 读取器口径一致），故障行会按原有配色标红，Critical Warning 的位标志也恢复为可读文本（如 `temperature_high`、`read_only`）。
+- **NVMe 健康权重匹配失效** — `computeHealth` 按属性**名称**匹配 NVMe 权重，而移植层的名称来自 CrystalDiskInfo 语言表（媒体错误项名为 `Media and Data Integrity Errors`，不是 `Media Errors`），该权重从未生效。改为按 NVMe 属性 ID 匹配（0x01 / 0x05 / 0x0D / 0x0E）。
+- **NVMe 协议查询布局** — 修正查询结构体：CrystalDiskInfo 使用自有的 8 字节 `{PropertyId, QueryType}`，而非 Windows SDK 的 `STORAGE_PROPERTY_QUERY`（含 `AdditionalParameters[1]`，`sizeof == 12`）。后者会把协议数据推迟 4 字节，查询被以 `ERROR_INVALID_PARAMETER`(87) 拒绝。
+- **NVMe 属性码超出数组边界** — `CdiAttributeName.cpp` 用读取 8 字节的 `B8toB64le(const BYTE*)` 去读 6 字节的 `SMART_ATTRIBUTE::RawValue`，越界读到相邻属性的 ID。改为 6 字节的数组重载，修复控制器忙时间 / 通电时间 / 意外掉电等原始值显示为天文数字的问题。
+- **`wprintf`/`swprintf` 宽字符格式** — 宽格式串中的 `%s` 在符合标准的 C 运行库下按窄字符串解释（MinGW + `-municode` 下每次只输出首字节），已统一改为 `%ls`；MSVC 同样接受该写法。
+- **厂商识别与阈值** — `Threshold05` / `ThresholdC5` / `ThresholdC6` / `ThresholdFF` 按 CrystalDiskInfo INI 的默认值 1/1/1/10 预置，避免 CAUTION 判定被静默关闭。
+
+### 兼容性
+
+- **Windows 11 NVMe 通路回退** — 部分 Windows 11 NVMe 驱动栈（已实测 Samsung 驱动）对 `StorageAdapterProtocolSpecificProperty`(49) 返回 `ERROR_INVALID_FUNCTION`，但接受设备级的 `StorageDeviceProtocolSpecificProperty`(50)。NVMe 查询现在先试 49 再回退 50。
+- **NVMe 身份识别回退** — 同一驱动栈会返回 SMART 健康日志却不返回 Identify Controller 载荷；此时磁盘身份改由存储描述符提供，避免整块磁盘（连同其 S.M.A.R.T. 页）被丢弃。
+- **MinGW 可构建** — 补齐 `FILE_DEVICE_SCSI` 定义（mingw-w64 的 `ntddscsi.h` 未提供），并为 MinGW 增加 `_WIN32_WINNT=0x0A00`。
+
+### 构建系统
+
+- **源文件列表同步替换** — `CMakeLists.txt` 与 `IOMonitor.vcxproj` / `.filters` 移除 8 个 `SmartReader*.cpp/h`，改为 10 个采集层文件（`CdiSmart`、`CdiSmartSupport`、`CdiSmartIo`、`CdiSmartFill`、`CdiSmartSsd`、`CdiSmartStatus`、`CdiSmartNvmeInterp`、`CdiAttributeName`、`CdiSmartAttributeTable`）加 `SmartCdiAdapter`。
+- **SDK 版本对齐** — 全局定义 `_WIN32_WINNT=0x0A00 WINVER=0x0A00`，确保 NVMe 存储协议查询与 `StorageAdapterProtocolSpecificProperty` 在 MSVC 与 MinGW 下都有声明。
+- **版本号更新为 `v3.0.0`** — `CMakeLists.txt` 的 `project(... VERSION 3.0.0)`、`main.cpp` 的帮助文本、`Display.cpp` 标题栏与 README 界面示意图同步更新。
+
+
+
+---
+
 ## [v2.0.0] — 2026-07-24
 
 ###  Bug 修复

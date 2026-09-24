@@ -120,7 +120,7 @@ std::wstring ConsoleDisplay::fmtRate(double bps) const {
     int i = 0; double v = bps;
     while (v >= 1024.0 && i < 3) { v /= 1024.0; i++; }
     wchar_t b[32];
-    swprintf(b, 32, L"%6.2f %s", v, u[i]);
+    swprintf(b, 32, L"%6.2f %ls", v, u[i]);
     return b;
 }
 
@@ -130,9 +130,9 @@ std::wstring ConsoleDisplay::fmtBytes(uint64_t bytes) const {
     int i = 0; double v = static_cast<double>(bytes);
     while (v >= 1024.0 && i < 4) { v /= 1024.0; i++; }
     wchar_t b[32];
-    if (v >= 100.0)      swprintf(b, 32, L"%5.0f %s", v, u[i]);
-    else if (v >= 10.0)  swprintf(b, 32, L"%5.1f %s", v, u[i]);
-    else                 swprintf(b, 32, L"%5.2f %s", v, u[i]);
+    if (v >= 100.0)      swprintf(b, 32, L"%5.0f %ls", v, u[i]);
+    else if (v >= 10.0)  swprintf(b, 32, L"%5.1f %ls", v, u[i]);
+    else                 swprintf(b, 32, L"%5.2f %ls", v, u[i]);
     return b;
 }
 
@@ -310,8 +310,8 @@ void ConsoleDisplay::renderHeader(const SystemIOStats& stats) {
     {
         wchar_t tmp[256];
         swprintf(tmp, 256,
-                 L"  IO Monitor v2.0   |   Up: %s   |   Active: %d / %d   |   "
-                 L"Disk: R %s  W %s",
+                 L"  IO Monitor v3.0   |   Up: %ls   |   Active: %d / %d   |   "
+                 L"Disk: R %ls  W %ls",
                  fmtTime(uptime).c_str(),
                  stats.activeProcessCount, stats.totalProcessCount,
                  fmtRate(stats.physicalDiskReadRate).c_str(),
@@ -338,7 +338,7 @@ void ConsoleDisplay::renderHeader(const SystemIOStats& stats) {
         if (nameW < 16) nameW = 16;
 
         wchar_t tmp[512];
-        swprintf(tmp, 512, L" %-*s%-*s%-*s %-*s %-*s %-*s ",
+        swprintf(tmp, 512, L" %-*ls%-*ls%-*ls %-*ls %-*ls %-*ls ",
                  RANK_W, L"#",
                  nameW, L"Process Name / Path",
                  PID_W,  L"PID",
@@ -412,7 +412,7 @@ void ConsoleDisplay::renderProcessRows(const std::vector<ProcessIOData>& procs, 
             // ── Line 1: name + pid + rates + session IO ──
             {
                 wchar_t tmp[1024];
-                swprintf(tmp, 1024, L" %*zu %-*s %*lu  %-*s %-*s %-*s ",
+                swprintf(tmp, 1024, L" %*zu %-*ls %*lu  %-*ls %-*ls %-*ls ",
                          RANK_W, static_cast<size_t>(i + 1),
                          nameW, truncate(p.name, static_cast<size_t>(nameW)).c_str(),
                          PID_W,  p.pid,
@@ -502,7 +502,7 @@ void ConsoleDisplay::renderFooter(int sampleMs, bool isRecording) {
 
     wchar_t tmp[512];
     swprintf(tmp, 512,
-             L" Sort: %s  |  Show: %d  |  Sample: %dms / Refresh: %dms  |  %s  |  "
+             L" Sort: %ls  |  Show: %d  |  Sample: %dms / Refresh: %dms  |  %ls  |  "
              L"[Q]uit [R][W][T][S][P] [C]lear [O]Record [M]ini +/- [ ]Speed 1-5",
              sortNames[static_cast<int>(m_sortMode)],
              m_maxDisplay, sampleMs, m_refreshMs,

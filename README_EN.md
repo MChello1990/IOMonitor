@@ -23,7 +23,24 @@ IOMonitor/
 │   ├── Monitor.h/cpp      # Core: process I/O data collection & PDH physical disk stats
 │   ├── Display.h/cpp      # UI: VT100 color console rendering & keyboard interaction
 │   ├── Recorder.h/cpp     # Recording: CSV I/O data export (async write queue)
-│   └── OverlayWindow.h/cpp # Overlay: Win32 always-on-top mini-window
+│   ├── OverlayWindow.h/cpp # Overlay: Win32 always-on-top mini-window
+│   ├── IopsMonitor.h/cpp  # IOPS and queue-depth monitoring
+│   ├── CdiSmart.h/cpp     # S.M.A.R.T. core: enumeration, identify, refresh (CAtaSmart port)
+│   ├── CdiSmartDetail.h   # Port-shared internals (byte order, strings, vendor side channel)
+│   ├── CdiSmartSupport.cpp # Shared string tables and the FlagLife* side store
+│   ├── CdiSmartIo.cpp     # The four acquisition paths (ATA pass-through / SAT / legacy IOCTL / NVMe)
+│   ├── CdiSmartFill.cpp   # Attribute and threshold parsing (FillSmartData / FillSmartThreshold)
+│   ├── CdiSmartSsd.cpp    # Vendor detection and SSD classification (CheckSsdSupport)
+│   ├── CdiSmartStatus.cpp # Health verdict, power-on-hours units, disk status (CheckDiskStatus)
+│   ├── CdiSmartNvmeInterp.cpp # NVMe SMART log -> ATA-style attribute list
+│   ├── CdiAttributeName.h/cpp # Attribute naming and raw value presentation
+│   ├── CdiSmartAttributeTable.cpp # Attribute name tables (generated from CrystalDiskInfo)
+│   ├── SmartDataModel.h/cpp # S.M.A.R.T. data model (the GUI-facing contract)
+│   ├── SmartCdiAdapter.h/cpp # Adapter: port types -> the GUI data model
+│   ├── SmartMonitor.h/cpp  # S.M.A.R.T. monitor page (GUI window)
+│   ├── SmartOverlayWindow.h/cpp # S.M.A.R.T. overlay mini-window
+│   ├── SmartDebug.h        # Thread-aware diagnostic trace framework
+│   └── SmartDebugWindow.h/cpp # Trace viewer window
 │   └── reports/            # Test report output directory
 ├── CMakeLists.txt          # CMake build configuration
 
@@ -80,11 +97,20 @@ iomonitor.exe --help
 | `--num N` | `-n N` | 30 | 5–100 | Number of processes displayed |
 | `--record` | `-o` | — | — | Auto-start CSV recording on launch |
 | `--help` | `-h` | — | — | Show help information |
+| `--smart-dump` | — | — | — | Print every disk's S.M.A.R.T. data and exit (needs Administrator) |
+
+`--smart-dump` prints each disk's model / serial / firmware / interface / capacity /
+health verdict and full attribute table, followed by what the GUI adapter sees, and
+finishes with the path of the trace log for that run:
+
+```
+iomonitor.exe --smart-dump
+```
 
 ## Interface
 
 ```
-┌──── IO Monitor v2.0 ─────────────────────────────────────────────────┐
+┌──── IO Monitor v3.0 ─────────────────────────────────────────────────┐
 │  Up: 00:05:32  |  Procs: 12 active / 184 total  |  Disk: R 12.3M W 5.7M/s │
 ├───────────────────────────────────────────────────────────────────────┤
 │  #   Process              PID    Read/sec       Write/sec      Session IO │
@@ -218,6 +244,13 @@ Press `M` to enter overlay mode. The overlay is a 25% opaque always-on-top mini-
 ### Compatibility
 
 - Operating System: Windows 10 version 1607 or later (VT100 terminal support required)
+- S.M.A.R.T. layer: Windows 10 1709 or later for the direct NVMe path
+  (`StorageAdapterProtocolSpecificProperty` / `StorageDeviceProtocolSpecificProperty`).
+  Windows 10 1507–1703 fall back to the SATA/SAT ladder and may report identity
+  without the NVMe health log. Windows 10 and 11 are both fully supported.
+- Administrator privileges are required to read S.M.A.R.T.: `\\.\PhysicalDriveN`
+  is opened with `GENERIC_WRITE`. Without elevation the disk list comes back empty
+  and the reason is written to the trace log.
 - Compiler: MSVC 2019+ or MinGW-w64 8.0+
 - C++ Standard: C++17
 

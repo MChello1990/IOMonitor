@@ -33,22 +33,43 @@
     <ClCompile Include="src\IopsMonitor.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="src\SmartDataModel.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
     <ClCompile Include="src\SmartMonitor.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="src\CdiSmart.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="src\CdiSmartSupport.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="src\CdiSmartIo.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="src\CdiSmartFill.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="src\CdiSmartSsd.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="src\CdiSmartStatus.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="src\CdiSmartNvmeInterp.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="src\CdiAttributeName.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="src\CdiSmartAttributeTable.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="src\SmartCdiAdapter.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
     <ClCompile Include="src\SmartOverlayWindow.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
-    <ClCompile Include="src\SmartReaderBase.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
-    <ClCompile Include="src\SmartReaderNvme.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
-    <ClCompile Include="src\SmartReaderAta.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
-    <ClCompile Include="src\SmartReaderScsi.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="src\SmartDebugWindow.cpp">
@@ -74,19 +95,19 @@
     <ClInclude Include="src\SmartDataModel.h">
       <Filter>头文件</Filter>
     </ClInclude>
-    <ClInclude Include="src\SmartReaderBase.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="src\SmartReaderNvme.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="src\SmartReaderAta.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="src\SmartReaderScsi.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
     <ClInclude Include="src\SmartMonitor.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="src\CdiSmart.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="src\CdiSmartDetail.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="src\CdiAttributeName.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="src\SmartCdiAdapter.h">
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="src\SmartOverlayWindow.h">

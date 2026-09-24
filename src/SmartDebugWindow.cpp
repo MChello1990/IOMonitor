@@ -565,11 +565,11 @@ void SmartDebugWindow::drawHeader(HDC hdc, const RECT& rc) {
         // Tab count badge
         wchar_t tabText[64];
         if (i == 0) {
-            swprintf(tabText, 64, L"%s  [%zu]", TAB_NAMES[i], m_cachedEntries.size());
+            swprintf(tabText, 64, L"%ls  [%zu]", TAB_NAMES[i], m_cachedEntries.size());
         } else if (i == 1) {
-            swprintf(tabText, 64, L"%s  [%zu]", TAB_NAMES[i], m_cachedThreadStats.size());
+            swprintf(tabText, 64, L"%ls  [%zu]", TAB_NAMES[i], m_cachedThreadStats.size());
         } else {
-            swprintf(tabText, 64, L"%s", TAB_NAMES[i]);
+            swprintf(tabText, 64, L"%ls", TAB_NAMES[i]);
         }
 
         DrawTextW(hdc, tabText, -1, &tabRc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
@@ -707,7 +707,7 @@ void SmartDebugWindow::paintTraceLog(HDC hdc, const RECT& rc) {
         SetTextColor(hdc, RGB(140, 142, 150));
         RECT statusText = {8, rc.bottom - 18, w - 8, rc.bottom};
         wchar_t statusBuf[256];
-        swprintf(statusBuf, 256, L"Total: %zu entries | Auto-scroll: %s | Log: %s | F5=Refresh  Ctrl+C=Clear  Ctrl+L=Log  Space=Pause",
+        swprintf(statusBuf, 256, L"Total: %zu entries | Auto-scroll: %ls | Log: %ls | F5=Refresh  Ctrl+C=Clear  Ctrl+L=Log  Space=Pause",
                  m_cachedEntries.size(),
                  m_autoScroll ? L"ON" : L"OFF",
                  m_loggingActive ? L"REC" : L"OFF");
@@ -719,7 +719,7 @@ void SmartDebugWindow::paintTraceLog(HDC hdc, const RECT& rc) {
             RECT pathRc = {8, rc.bottom - 34, w - 8, rc.bottom - 20};
             SetTextColor(hdc, RGB(100, 200, 100));
             wchar_t pathBuf[512];
-            swprintf(pathBuf, 512, L"  Log: %s", logPath.c_str());
+            swprintf(pathBuf, 512, L"  Log: %ls", logPath.c_str());
             DrawTextW(hdc, pathBuf, -1, &pathRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         }
     }

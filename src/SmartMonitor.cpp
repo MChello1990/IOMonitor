@@ -16,14 +16,13 @@
  */
 
 #include "SmartMonitor.h"
-#include "SmartReaderAta.h"
-#include "SmartReaderNvme.h"
-#include "SmartReaderScsi.h"
+#include "SmartCdiAdapter.h"
 #include "SmartDebugWindow.h"
 #include <winioctl.h>
 #include <algorithm>
 #include <cstdio>
 #include <cmath>
+#include <string>
 #include <commctrl.h>
 
 #ifdef _MSC_VER
@@ -238,179 +237,77 @@ void SmartMonitor::deleteFonts() {
 
 // ── Disk enumeration ─────────────────────────────────────────────────
 
+namespace {
+
+// Trace messages take narrow strings; the CDI layer speaks std::wstring.
+std::string WideToUtf8(const std::wstring& s) {
+    if (s.empty()) return std::string();
+    const int len = WideCharToMultiByte(CP_UTF8, 0, s.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    if (len <= 1) return std::string();
+    std::string out(static_cast<size_t>(len - 1), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, s.c_str(), -1, out.data(), len, nullptr, nullptr);
+    return out;
+}
+
+} // anonymous namespace
+
 void SmartMonitor::enumerateDisks() {
     SMART_TRACE_SCOPE("enumerateDisks", SmartTraceCategory::DISK_DISCOVERY, "Starting disk enumeration");
 
     m_disks.clear();
     m_selectedDiskIndex = 0;
 
-    int foundCount = 0;
-    int smartCount = 0;
+    if (!m_cdi) m_cdi = std::make_unique<cdi::CAtaSmart>();
 
-    for (uint32_t i = 0; i < 32; ++i) {
-        wchar_t path[64];
-        swprintf(path, 64, L"\\\\.\\PhysicalDrive%u", i);
+    // The CrystalDiskInfo port enumerates \\\\.\\PhysicalDriveN, works out the
+    // bus type and reads S.M.A.R.T. in a single pass, replacing what used to
+    // be the per-disk reader factory plus its bus-type switch here.
+    m_cdi->Init(FALSE);
 
-        HANDLE h = CreateFileW(path, 0, FILE_SHARE_READ | FILE_SHARE_WRITE,
-                                nullptr, OPEN_EXISTING, 0, nullptr);
-        if (h == INVALID_HANDLE_VALUE) continue;
-        CloseHandle(h);
+    const DWORD count = m_cdi->GetDiskCount();
+    if (count == 0) {
+        SMART_TRACE_EVENT("enumerateDisks", SmartTraceCategory::ERROR_EXCEPTION,
+                          "No disk found - reading S.M.A.R.T. requires administrator privileges");
+        return;
+    }
+
+    for (DWORD i = 0; i < count; ++i) {
+        // CrystalDiskInfo's first read happens before the vendor is known, so
+        // its vendor-gated attribute parse (host reads/writes, life, wear
+        // levelling) only lands on the refresh that follows.  Its own UI
+        // calls UpdateSmartInfo() for every disk right after Init(); doing
+        // the same here means the first paint already shows real numbers
+        // instead of the -1 sentinels.
+        m_cdi->UpdateSmartInfo(i);
+
+        const cdi::DRIVE_INFO& asi = m_cdi->GetDisk(i);
 
         DiskEntry entry;
-        entry.identity.diskNumber = i;
-
-        // Try to read identity using the correct reader
-        auto reader = createReaderForDisk(i);
-        if (reader) {
-            if (reader->readIdentity(entry.identity)) {
-                entry.smartAvailable = true;
-                smartCount++;
-
-                char msg[256];
-                snprintf(msg, sizeof(msg), "Disk %u: model=%s interface=%s smart=%s",
-                         i,
-                         std::string(entry.identity.model.begin(), entry.identity.model.end()).c_str(),
-                         entry.identity.interfaceName.c_str(),
-                         entry.smartAvailable ? "yes" : "no");
-                SMART_TRACE_EVENT("enumerateDisks", SmartTraceCategory::DISK_DISCOVERY, msg);
-            }
-            reader->close();
-        }
+        entry.cdiIndex = i;
+        entry.identity = smartcdi::MakeIdentity(asi, i);
+        entry.smartAvailable = asi.IsSmartCorrect != FALSE;
 
         if (entry.identity.model.empty()) {
-            wchar_t buf[32];
-            swprintf(buf, 32, L"PhysicalDrive%u", i);
-            entry.identity.model = buf;
+            entry.identity.model = L"PhysicalDrive" + std::to_wstring(asi.PhysicalDriveId);
         }
 
+        char msg[384];
+        snprintf(msg, sizeof(msg),
+                 "Disk %u (PhysicalDrive%d): model=%s interface=%s cmd=%s smart=%s",
+                 static_cast<unsigned>(i), asi.PhysicalDriveId,
+                 WideToUtf8(entry.identity.model).c_str(),
+                 entry.identity.interfaceName.c_str(),
+                 WideToUtf8(asi.CommandTypeString).c_str(),
+                 entry.smartAvailable ? "yes" : "no");
+        SMART_TRACE_EVENT("enumerateDisks", SmartTraceCategory::DISK_DISCOVERY, msg);
+
         m_disks.push_back(entry);
-        foundCount++;
     }
 
     char summary[128];
-    snprintf(summary, sizeof(summary), "Enumeration complete: %d disks found, %d SMART-capable", foundCount, smartCount);
+    snprintf(summary, sizeof(summary), "Enumeration complete: %u disks found",
+             static_cast<unsigned>(count));
     SMART_TRACE_EVENT("enumerateDisks", SmartTraceCategory::DISK_DISCOVERY, summary);
-}
-
-// ── Reader creation: detect bus type and instantiate correct reader ──
-
-std::unique_ptr<SmartReaderBase> SmartMonitor::createReaderForDisk(uint32_t diskNumber) {
-    SMART_TRACE_BEGIN("createReaderForDisk", SmartTraceCategory::DISK_DISCOVERY,
-                      "Creating reader for disk");
-
-    STORAGE_PROPERTY_QUERY query = {};
-    query.PropertyId = StorageDeviceProperty;
-    query.QueryType = PropertyStandardQuery;
-
-    wchar_t path[64];
-    swprintf(path, 64, L"\\\\.\\PhysicalDrive%u", diskNumber);
-
-    HANDLE h = CreateFileW(path, 0, FILE_SHARE_READ | FILE_SHARE_WRITE,
-                            nullptr, OPEN_EXISTING, 0, nullptr);
-    if (h == INVALID_HANDLE_VALUE) {
-        SMART_TRACE_END("createReaderForDisk", SmartTraceCategory::DISK_DISCOVERY, "Failed to open device");
-        return nullptr;
-    }
-
-    std::vector<uint8_t> propBuf(sizeof(STORAGE_DEVICE_DESCRIPTOR) + 512, 0);
-    DWORD bytesReturned = 0;
-
-    BOOL propOk = DeviceIoControl(h, IOCTL_STORAGE_QUERY_PROPERTY,
-                                   &query, sizeof(query),
-                                   propBuf.data(), static_cast<DWORD>(propBuf.size()),
-                                   &bytesReturned, nullptr);
-    CloseHandle(h);
-
-    STORAGE_BUS_TYPE busType = BusTypeUnknown;
-    if (propOk && bytesReturned >= sizeof(STORAGE_DEVICE_DESCRIPTOR)) {
-        auto* desc = reinterpret_cast<STORAGE_DEVICE_DESCRIPTOR*>(propBuf.data());
-        busType = desc->BusType;
-    }
-
-    // Bus type names for debug (BusTypeNvme = 17 per Windows SDK)
-    const char* busName = "Unknown";
-    switch (busType) {
-    case BusTypeUnknown: busName = "Unknown"; break;
-    case BusTypeScsi:    busName = "SCSI"; break;
-    case BusTypeAtapi:   busName = "ATAPI"; break;
-    case BusTypeAta:     busName = "ATA"; break;
-    case 4:              busName = "1394"; break;
-    case 5:              busName = "SSA"; break;
-    case 6:              busName = "Fibre"; break;
-    case BusTypeUsb:     busName = "USB"; break;
-    case BusTypeRAID:    busName = "RAID"; break;
-    case 9:              busName = "iSCSI"; break;
-    case BusTypeSas:     busName = "SAS"; break;
-    case BusTypeSata:    busName = "SATA"; break;
-    case BusTypeSd:      busName = "SD"; break;
-    case BusTypeMmc:     busName = "MMC"; break;
-    case BusTypeVirtual: busName = "Virtual"; break;
-    case BusTypeFileBackedVirtual: busName = "FileVirtual"; break;
-    case 17:             busName = "NVMe"; break;
-    default:             busName = "Other"; break;
-    }
-
-    char msg[128];
-    snprintf(msg, sizeof(msg), "BusType=%s(%d)", busName, static_cast<int>(busType));
-    SMART_TRACE_EVENT("createReaderForDisk", SmartTraceCategory::DISK_DISCOVERY, msg);
-
-    // Route to correct reader based on bus type
-    if (busType == BusTypeNvme) {
-        SMART_TRACE_EVENT("createReaderForDisk", SmartTraceCategory::DISK_DISCOVERY, "Routing to SmartReaderNvme");
-        auto nvme = std::make_unique<SmartReaderNvme>();
-        if (nvme->open(diskNumber)) {
-            DiskIdentity id;
-            if (nvme->readIdentity(id) && !id.model.empty()) {
-                SMART_TRACE_END("createReaderForDisk", SmartTraceCategory::DISK_DISCOVERY, "NVMe reader created successfully");
-                return nvme;
-            }
-            nvme->close();
-        }
-        SMART_TRACE_EVENT("createReaderForDisk", SmartTraceCategory::DISK_DISCOVERY, "NVMe reader failed");
-    }
-
-    if (busType == BusTypeAta || busType == BusTypeSata ||
-        busType == BusTypeSas || busType == BusTypeRAID ||
-        busType == BusTypeUsb || busType == BusTypeUnknown) {
-        SMART_TRACE_EVENT("createReaderForDisk", SmartTraceCategory::DISK_DISCOVERY, "Routing to SmartReaderAta");
-        auto ata = std::make_unique<SmartReaderAta>();
-        if (ata->open(diskNumber)) {
-            DiskIdentity id;
-            if (ata->readIdentity(id) && !id.model.empty()) {
-                SMART_TRACE_END("createReaderForDisk", SmartTraceCategory::DISK_DISCOVERY, "ATA reader created");
-                return ata;
-            }
-            ata->close();
-        }
-        SMART_TRACE_EVENT("createReaderForDisk", SmartTraceCategory::DISK_DISCOVERY, "ATA reader failed");
-    }
-
-    // Fallback: SCSI (USB bridges, etc.)
-    SMART_TRACE_EVENT("createReaderForDisk", SmartTraceCategory::DISK_DISCOVERY, "Fallback to SmartReaderScsi");
-    auto scsi = std::make_unique<SmartReaderScsi>();
-    if (scsi->open(diskNumber)) {
-        DiskIdentity id;
-        if (scsi->readIdentity(id) && !id.model.empty()) {
-            SMART_TRACE_END("createReaderForDisk", SmartTraceCategory::DISK_DISCOVERY, "SCSI reader created");
-            return scsi;
-        }
-        scsi->close();
-    }
-
-    // Last resort: try ATA anyway (for virtual disks, etc.)
-    SMART_TRACE_EVENT("createReaderForDisk", SmartTraceCategory::DISK_DISCOVERY, "Last resort: ATA retry");
-    auto ata = std::make_unique<SmartReaderAta>();
-    if (ata->open(diskNumber)) {
-        DiskIdentity id;
-        if (ata->readIdentity(id) && !id.model.empty()) {
-            SMART_TRACE_END("createReaderForDisk", SmartTraceCategory::DISK_DISCOVERY, "ATA reader created (last resort)");
-            return ata;
-        }
-        ata->close();
-    }
-
-    SMART_TRACE_END("createReaderForDisk", SmartTraceCategory::DISK_DISCOVERY, "No suitable reader found");
-    return nullptr;
 }
 
 // ── SMART data refresh ───────────────────────────────────────────────
@@ -422,10 +319,10 @@ void SmartMonitor::refreshSmartData() {
     SmartDataSnapshot newSnap;
 
     char msg[128];
-    snprintf(msg, sizeof(msg), "Refreshing SMART data for disk %u", entry.identity.diskNumber);
+    snprintf(msg, sizeof(msg), "Refreshing SMART data for disk %u", entry.cdiIndex);
     SMART_TRACE_BEGIN("refreshSmartData", SmartTraceCategory::DATA_REFRESH, msg);
 
-    bool ok = readSmartDataForDisk(entry.identity.diskNumber, newSnap);
+    bool ok = readSmartDataForDisk(entry.cdiIndex, newSnap);
     newSnap.sampleTime = std::chrono::steady_clock::now();
 
     if (ok) {
@@ -487,126 +384,49 @@ void SmartMonitor::refreshSmartData() {
     SMART_TRACE_END("refreshSmartData", SmartTraceCategory::DATA_REFRESH, ok ? "Success" : "Failed");
 }
 
-bool SmartMonitor::readSmartDataForDisk(uint32_t diskNumber, SmartDataSnapshot& snapshot) {
-    SMART_TRACE_BEGIN("readSmartDataForDisk", SmartTraceCategory::DATA_REFRESH, "Opening reader");
+bool SmartMonitor::readSmartDataForDisk(uint32_t cdiIndex, SmartDataSnapshot& snapshot) {
+    SMART_TRACE_BEGIN("readSmartDataForDisk", SmartTraceCategory::DATA_REFRESH,
+                      "Refreshing via the CrystalDiskInfo port");
 
-    auto reader = createReaderForDisk(diskNumber);
-    if (!reader) {
-        SMART_TRACE_END("readSmartDataForDisk", SmartTraceCategory::ERROR_EXCEPTION, "No reader available");
+    if (!m_cdi || cdiIndex >= m_cdi->GetDiskCount()) {
+        SMART_TRACE_END("readSmartDataForDisk", SmartTraceCategory::ERROR_EXCEPTION,
+                        "Disk index out of range");
         snapshot.dataValid = false;
-        snapshot.errorMessage = "Cannot open disk device. Check permissions.";
-        snapshot.permissionHint = L"Run as Administrator for full SMART access.";
+        snapshot.errorMessage = "Disk is no longer present.";
         return false;
     }
 
-    // Read identity
-    SMART_TRACE_EVENT("readSmartDataForDisk", SmartTraceCategory::DATA_REFRESH, "Reading disk identity");
-    if (!reader->readIdentity(snapshot.identity)) {
-        SMART_TRACE_EVENT("readSmartDataForDisk", SmartTraceCategory::ERROR_EXCEPTION, "readIdentity failed");
-        snapshot.dataValid = false;
-        snapshot.errorMessage = "Failed to read disk identity.";
-        reader->close();
-        return false;
-    }
+    // Re-read attributes and thresholds from the device.  The port also
+    // recomputes its own overall-health verdict (CheckDiskStatus) as part of
+    // this, which the adapter surfaces through smartReturnStatus.
+    m_cdi->UpdateSmartInfo(cdiIndex);
 
-    // Read attributes
-    SMART_TRACE_EVENT("readSmartDataForDisk", SmartTraceCategory::DATA_REFRESH, "Reading SMART attributes");
-    std::vector<SmartAttribute> attrs;
-    if (!reader->readAttributes(attrs)) {
-        SMART_TRACE_EVENT("readSmartDataForDisk", SmartTraceCategory::ERROR_EXCEPTION,
-                         "readAttributes failed - both pass-through and protocol query paths failed");
+    const cdi::DRIVE_INFO& asi = m_cdi->GetDisk(cdiIndex);
+
+    // Drives whose S.M.A.R.T. read failed still have a usable identity, so
+    // the snapshot is filled either way and dataValid carries the verdict.
+    smartcdi::FillSnapshot(asi, cdiIndex, snapshot);
+
+    if (!asi.IsSmartCorrect) {
         snapshot.dataValid = false;
-        snapshot.errorMessage = "Failed to read SMART attributes. Device may not support SMART or requires admin privileges.";
+        snapshot.errorMessage =
+            "Failed to read S.M.A.R.T. attributes. Device may not support S.M.A.R.T. "
+            "or requires admin privileges.";
         snapshot.permissionHint = L"Ensure the device supports S.M.A.R.T. and run as Administrator.";
-        reader->close();
+        SMART_TRACE_END("readSmartDataForDisk", SmartTraceCategory::ERROR_EXCEPTION,
+                        "S.M.A.R.T. data not reliable for this disk");
         return false;
-    }
-
-    // Read thresholds
-    reader->readThresholds(attrs);
-
-    // SMART RETURN STATUS check - smartmontools' ataSmartStatus2()
-    // This is the definitive check for whether any SMART threshold has been exceeded.
-    // It provides the same "SMART overall-health self-assessment test" result
-    // that BIOS/UEFI uses to determine if a disk is failing.
-    snapshot.smartReturnStatus = reader->checkSmartStatus();
-
-    snapshot.attributes = std::move(attrs);
-    reader->close();
-
-    // Extract key metrics from attributes
-    for (auto& attr : snapshot.attributes) {
-        switch (attr.id) {
-        case 9: // Power-On Hours
-            snapshot.powerOnHours = attr.rawValue;
-            break;
-        case 194: // Temperature Celsius
-            snapshot.temperatureCelsius = static_cast<double>(attr.rawValue & 0xFF);
-            break;
-        case 190: // Airflow Temperature (alternate)
-            if (snapshot.temperatureCelsius == 0.0) {
-                snapshot.temperatureCelsius = static_cast<double>(attr.rawValue & 0xFF);
-            }
-            break;
-        case 241: // Total LBAs Written
-            snapshot.totalLbasWritten = attr.rawValue;
-            break;
-        case 242: // Total LBAs Read
-            snapshot.totalLbasRead = attr.rawValue;
-            break;
-        case 177: // Wear Leveling Count
-            snapshot.wearLevelingCount = static_cast<int64_t>(attr.rawValue);
-            break;
-        case 202: // Percentage of Rated Life Used / Remaining
-            snapshot.remainingLifePercent = static_cast<int64_t>(attr.rawValue);
-            break;
-        }
-    }
-
-    // Convert to bytes: NVMe Data Units are 512*1000 bytes, ATA uses sectors
-    if (snapshot.identity.diskInterface == DiskInterfaceType::NVMe) {
-        snapshot.totalBytesRead = snapshot.totalLbasRead * 512000ULL;
-        snapshot.totalBytesWritten = snapshot.totalLbasWritten * 512000ULL;
-    } else {
-        uint32_t sectorSize = snapshot.identity.sectorSize > 0 ? snapshot.identity.sectorSize : 512;
-        snapshot.totalBytesRead = snapshot.totalLbasRead * sectorSize;
-        snapshot.totalBytesWritten = snapshot.totalLbasWritten * sectorSize;
-    }
-
-    // NVMe: rawValue stored in Kelvin — extract Celsius from rawString
-    if (snapshot.identity.diskInterface == DiskInterfaceType::NVMe) {
-        for (auto& attr : snapshot.attributes) {
-            if (attr.id == 194 || attr.name == "Temperature") {
-                double t = 0;
-                std::wstring tempWide = ataToWide(attr.rawString);
-                if (swscanf_s(tempWide.c_str(), L"%lf", &t) == 1) {
-                    snapshot.temperatureCelsius = t;
-                }
-                break;
-            }
-        }
-    }
-
-    // For NVMe: Percentage Used is remaining life
-    if (snapshot.remainingLifePercent < 0) {
-        for (auto& attr : snapshot.attributes) {
-            if (attr.id == 202 || attr.name == "Percentage Used") {
-                snapshot.remainingLifePercent = static_cast<int64_t>(attr.rawValue);
-                break;
-            }
-        }
     }
 
     // Session power-on hours (estimate from session start time)
-    auto now = std::chrono::steady_clock::now();
+    const auto now = std::chrono::steady_clock::now();
     snapshot.sessionPowerOnHours = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::seconds>(now - m_sessionStart).count() / 3600);
 
-    snapshot.dataValid = true;
-
-    char msg[128];
-    snprintf(msg, sizeof(msg), "Success: %zu attributes, temp=%.1fC, health=%.1f%%",
-             snapshot.attributes.size(), snapshot.temperatureCelsius, snapshot.healthPercent);
+    char msg[160];
+    snprintf(msg, sizeof(msg), "Success: %zu attributes, temp=%.1fC, life=%lld%%",
+             snapshot.attributes.size(), snapshot.temperatureCelsius,
+             static_cast<long long>(snapshot.remainingLifePercent));
     SMART_TRACE_END("readSmartDataForDisk", SmartTraceCategory::DATA_REFRESH, msg);
     return true;
 }
@@ -628,16 +448,27 @@ void SmartMonitor::computeHealth(SmartDataSnapshot& snapshot) {
                  (snapshot.wearLevelingCount >= 0) ||
                  (snapshot.remainingLifePercent >= 0);
 
-    // For ATA drives, SMART RETURN STATUS failure is definitive ("drive is failing").
-    // For NVMe, critical warnings are transient (e.g. temperature threshold) and
-    // are handled through the weighted attribute system below.
-    if (snapshot.smartReturnStatus == 1 &&
-        snapshot.identity.diskInterface != DiskInterfaceType::NVMe) {
-        snapshot.healthPercent = 0.0;
-        snapshot.status = SmartStatus::Failed;
-        SMART_TRACE_END("computeHealth", SmartTraceCategory::HEALTH_COMPUTE,
-                        "FAILED: SMART RETURN STATUS indicates threshold exceeded");
-        return;
+    // smartReturnStatus is the acquisition layer's own overall-health verdict
+    // (CrystalDiskInfo's CheckDiskStatus, mapped by the adapter):
+    //   0 = good, 1 = caution or bad, -1 = no verdict.
+    //
+    // For ATA drives a non-good verdict is definitive ("drive is failing").
+    // For NVMe it is softer — CrystalDiskInfo raises CAUTION for conditions
+    // that can be transient, a temperature excursion above all — so it caps
+    // the weighted score instead of zeroing it.  Capping is necessary
+    // because the weighted loop cannot see NVMe log fields at all: the NVMe
+    // interpreter fills RawValue only, leaving current and threshold at 0,
+    // so every NVMe attribute scores as healthy.
+    bool nvmeVerdictNotGood = false;
+    if (snapshot.smartReturnStatus == 1) {
+        if (snapshot.identity.diskInterface != DiskInterfaceType::NVMe) {
+            snapshot.healthPercent = 0.0;
+            snapshot.status = SmartStatus::Failed;
+            SMART_TRACE_END("computeHealth", SmartTraceCategory::HEALTH_COMPUTE,
+                            "FAILED: S.M.A.R.T. overall-health verdict is not good");
+            return;
+        }
+        nvmeVerdictNotGood = true;
     }
 
     double totalPenalty = 0.0;
@@ -711,19 +542,20 @@ void SmartMonitor::computeHealth(SmartDataSnapshot& snapshot) {
             }
         }
 
-        // NVMe-specific health factors
+        // NVMe-specific health factors.
+        //
+        // Keyed on CrystalDiskInfo's NVMe attribute ids rather than on names:
+        // the acquisition layer names these from its own language table, so
+        // the media-error entry is "Media and Data Integrity Errors" and a
+        // name-based test for "Media Errors" never matched.  The ids are
+        // stable — see the id table in src/CdiSmartNvmeInterp.cpp.
         if (snapshot.identity.diskInterface == DiskInterfaceType::NVMe) {
-            if (attr.name == "Critical Warning") {
-                weight = std::max(weight, SmartHealthWeights::NVME_CRITICAL_WARNING);
-            }
-            if (attr.name == "Media Errors") {
-                weight = std::max(weight, SmartHealthWeights::NVME_MEDIA_ERRORS);
-            }
-            if (attr.name == "Percentage Used") {
-                weight = std::max(weight, SmartHealthWeights::NVME_PERCENTAGE_USED);
-            }
-            if (attr.name == "Unsafe Shutdowns") {
-                weight = std::max(weight, SmartHealthWeights::NVME_UNSAFE_SHUTDOWNS);
+            switch (attr.id) {
+            case 0x01: weight = std::max(weight, SmartHealthWeights::NVME_CRITICAL_WARNING); break;
+            case 0x05: weight = std::max(weight, SmartHealthWeights::NVME_PERCENTAGE_USED); break;
+            case 0x0D: weight = std::max(weight, SmartHealthWeights::NVME_UNSAFE_SHUTDOWNS); break;
+            case 0x0E: weight = std::max(weight, SmartHealthWeights::NVME_MEDIA_ERRORS); break;
+            default: break;
             }
         }
 
@@ -739,6 +571,13 @@ void SmartMonitor::computeHealth(SmartDataSnapshot& snapshot) {
     }
 
     snapshot.healthPercent = std::max(0.0, std::min(100.0, snapshot.healthPercent));
+
+    // An NVMe verdict of caution or worse floors the score at "Warning": the
+    // weighted score above is blind to the NVMe log fields, so without this
+    // a drive with media errors or exhausted spare would still read 100%.
+    if (nvmeVerdictNotGood) {
+        snapshot.healthPercent = std::min(snapshot.healthPercent, HealthGrades::GOOD - 1.0);
+    }
 
     // Determine status
     if (snapshot.healthPercent >= HealthGrades::EXCELLENT) {
@@ -863,9 +702,9 @@ std::wstring SmartMonitor::fmtBytesSmart(uint64_t bytes) const {
     double v = static_cast<double>(bytes);
     while (v >= 1024.0 && i < 4) { v /= 1024.0; ++i; }
     wchar_t buf[64];
-    if (v >= 100.0) swprintf(buf, 64, L"%.0f %s", v, units[i]);
-    else if (v >= 10.0) swprintf(buf, 64, L"%.1f %s", v, units[i]);
-    else swprintf(buf, 64, L"%.2f %s", v, units[i]);
+    if (v >= 100.0) swprintf(buf, 64, L"%.0f %ls", v, units[i]);
+    else if (v >= 10.0) swprintf(buf, 64, L"%.1f %ls", v, units[i]);
+    else swprintf(buf, 64, L"%.2f %ls", v, units[i]);
     return buf;
 }
 
@@ -946,6 +785,36 @@ LRESULT CALLBACK SmartMonitor::wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
     case WM_ERASEBKGND:
         return 1;
 
+    case WM_MOUSEWHEEL: {
+        // The attribute table is the only scrollable region on the page: a
+        // drive with many attributes lists more rows than the band holds.
+        // m_attrBandTop is published by paint() and stays 0 until the first
+        // one, so a wheel event above the table falls through untouched.
+        if (!self || self->m_attrBandTop <= 0) break;
+
+        POINT pt = {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+        ScreenToClient(hwnd, &pt);
+        if (pt.y < self->m_attrBandTop) break;
+
+        const int rows = (GET_WHEEL_DELTA_WPARAM(wp) > 0) ? -3 : 3;
+
+        size_t attrCount = 0;
+        {
+            std::lock_guard<std::mutex> lk(self->m_dataMutex);
+            if (self->m_selectedDiskIndex < self->m_disks.size()) {
+                attrCount = self->m_disks[self->m_selectedDiskIndex].snapshot.attributes.size();
+            }
+        }
+
+        const int maxScroll = std::max(0, static_cast<int>(attrCount) - self->m_attrRowsFit);
+        const int next = std::min(maxScroll, std::max(0, self->m_attrScroll + rows));
+        if (next != self->m_attrScroll) {
+            self->m_attrScroll = next;
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        return 0;
+    }
+
     case WM_LBUTTONDOWN: {
         if (!self) break;
         int x = GET_X_LPARAM(lp);
@@ -964,6 +833,7 @@ LRESULT CALLBACK SmartMonitor::wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
                 int dx = 15 + static_cast<int>(i) * (diskW + 8);
                 if (x >= dx && x <= dx + diskW) {
                     self->m_selectedDiskIndex = i;
+                    self->m_attrScroll = 0;   // new drive, new attribute list
                     self->m_prevSnapshot = SmartDataSnapshot{}; // Reset rate calc
                     self->onRefreshNow();
                     InvalidateRect(hwnd, nullptr, FALSE);
@@ -1213,6 +1083,18 @@ void SmartMonitor::paint(HDC hdc, const RECT& rc) {
 
     y += 5;
 
+    // ── Vertical split ──────────────────────────────────────────
+    // The attribute table is the densest element on the page and the only
+    // one with six columns.  Those do not fit the 340 px right column — a
+    // single row is roughly 500 px at the mono font, which silently clipped
+    // the Raw column away — so the table gets its own full-width band along
+    // the bottom, and the cards and charts above share what is left.
+    y += 5;
+    const int contentH = h - y - 40;
+    const int bandTop  = y + contentH * 52 / 100;
+    const int upperH   = bandTop - y - 10;
+    m_attrBandTop = bandTop;
+
     // Get current snapshot
     SmartDataSnapshot snap;
     {
@@ -1230,7 +1112,9 @@ void SmartMonitor::paint(HDC hdc, const RECT& rc) {
 
     // Left: Disk overview
     {
-        RECT leftRc = {10, y, leftW, h - 40};
+        // Stops where the attribute band starts; the six info rows it holds
+        // need far less height than the full column.
+        RECT leftRc = {10, y, leftW, bandTop - 8};
         HBRUSH cardBg = CreateSolidBrush(SmartColors::BG_CARD);
         FillRect(memDC, &leftRc, cardBg);
         DeleteObject(cardBg);
@@ -1305,14 +1189,11 @@ void SmartMonitor::paint(HDC hdc, const RECT& rc) {
         }
     }
 
-    // Center + Right area
-    y += 5;
-    int contentH = h - y - 40;
 
     // Center: Metric cards
     {
         int cardW = (centerW - 20) / 2;
-        int cardH = (contentH - 20) / 2;
+        int cardH = (upperH - 20) / 2;
 
         // Card 1: Temperature
         {
@@ -1463,14 +1344,14 @@ void SmartMonitor::paint(HDC hdc, const RECT& rc) {
             SelectObject(memDC, m_hFontBody);
             RECT rRc = {cx + 12, cy + 32, cx + cardW - 12, cy + 54};
             wchar_t rBuf[64];
-            swprintf(rBuf, 64, L"R: %s", fmtBytesSmart(snap.totalBytesRead).c_str());
+            swprintf(rBuf, 64, L"R: %ls", fmtBytesSmart(snap.totalBytesRead).c_str());
             DrawTextW(memDC, rBuf, -1, &rRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
             // Write
             SetTextColor(memDC, SmartColors::WRITE_COLOR);
             RECT wRc = {cx + 12, cy + 56, cx + cardW - 12, cy + 78};
             wchar_t wBuf[64];
-            swprintf(wBuf, 64, L"W: %s", fmtBytesSmart(snap.totalBytesWritten).c_str());
+            swprintf(wBuf, 64, L"W: %ls", fmtBytesSmart(snap.totalBytesWritten).c_str());
             DrawTextW(memDC, wBuf, -1, &wRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
             // Rates
@@ -1478,21 +1359,23 @@ void SmartMonitor::paint(HDC hdc, const RECT& rc) {
             SetTextColor(memDC, SmartColors::TEXT_DIM);
             RECT rateRc = {cx + 12, cy + 78, cx + cardW - 12, cy + 96};
             wchar_t rateBuf[64];
-            swprintf(rateBuf, 64, L"Rate: R %s  W %s",
+            swprintf(rateBuf, 64, L"Rate: R %ls  W %ls",
                      fmtRateMBps(snap.readRateMBps).c_str(),
                      fmtRateMBps(snap.writeRateMBps).c_str());
             DrawTextW(memDC, rateBuf, -1, &rateRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         }
     }
 
-    // Right: Charts + Detailed Attributes
+    // Right: Charts (the attribute table now lives in the band below)
     {
         int rx = w - rightW - 5;
         int ry = y;
 
+        const int healthChartH = std::min(160, std::max(90, upperH * 55 / 100));
+
         // Health history bar chart
         {
-            RECT chartRc = {rx, ry, rx + rightW, ry + 160};
+            RECT chartRc = {rx, ry, rx + rightW, ry + healthChartH};
             HBRUSH cardBg = CreateSolidBrush(SmartColors::BG_CARD);
             FillRect(memDC, &chartRc, cardBg);
             DeleteObject(cardBg);
@@ -1512,14 +1395,16 @@ void SmartMonitor::paint(HDC hdc, const RECT& rc) {
 
             // Health history bar chart
             std::vector<double> hhist(m_healthHistory.begin(), m_healthHistory.end());
-            drawMiniBarChart(memDC, rx + 16, ry + 28, rightW - 32, 120, hhist, SmartColors::HEALTH_GREEN);
+            drawMiniBarChart(memDC, rx + 16, ry + 28, rightW - 32,
+                             std::max(24, healthChartH - 40), hhist, SmartColors::HEALTH_GREEN);
         }
 
-        ry += 168;
+        ry += healthChartH + 8;
 
         // Read/Write rate sparkline
         {
-            RECT chartRc = {rx, ry, rx + rightW, ry + 120};
+            const int rateCardH = std::max(90, std::min(120, bandTop - ry - 8));
+            RECT chartRc = {rx, ry, rx + rightW, ry + rateCardH};
             HBRUSH cardBg = CreateSolidBrush(SmartColors::BG_CARD);
             FillRect(memDC, &chartRc, cardBg);
             DeleteObject(cardBg);
@@ -1542,80 +1427,163 @@ void SmartMonitor::paint(HDC hdc, const RECT& rc) {
             SetTextColor(memDC, SmartColors::READ_COLOR);
             RECT rrRc = {rx + 16, ry + 30, rx + rightW - 16, ry + 52};
             wchar_t rrBuf[64];
-            swprintf(rrBuf, 64, L"Read:  %s", fmtRateMBps(snap.readRateMBps).c_str());
+            swprintf(rrBuf, 64, L"Read:  %ls", fmtRateMBps(snap.readRateMBps).c_str());
             DrawTextW(memDC, rrBuf, -1, &rrRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
             SetTextColor(memDC, SmartColors::WRITE_COLOR);
             RECT wrRc = {rx + 16, ry + 56, rx + rightW - 16, ry + 78};
             wchar_t wrBuf[64];
-            swprintf(wrBuf, 64, L"Write: %s", fmtRateMBps(snap.writeRateMBps).c_str());
+            swprintf(wrBuf, 64, L"Write: %ls", fmtRateMBps(snap.writeRateMBps).c_str());
             DrawTextW(memDC, wrBuf, -1, &wrRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         }
 
-        ry += 128;
+    }
 
-        // Detailed attributes panel
-        if (!snap.attributes.empty()) {
-            int attrH = h - ry - 10;
-            RECT attrRc = {rx, ry, rx + rightW, ry + attrH};
-            HBRUSH cardBg = CreateSolidBrush(SmartColors::BG_CARD);
-            FillRect(memDC, &attrRc, cardBg);
-            DeleteObject(cardBg);
+    // ── S.M.A.R.T. attribute table (full width) ──────────────────────
+    //
+    // Laid out column by column rather than as one space-formatted string.
+    // The old single-line format needed roughly 500 px, so inside the 340 px
+    // right column everything from the Raw column onwards was clipped away,
+    // and the hard-coded header never lined up with the rows.  Each cell now
+    // gets its own rect, so columns align exactly and over-long values are
+    // ellipsised instead of silently disappearing.
+    if (!snap.attributes.empty()) {
+        const int bandLeft   = 10;
+        const int bandRight  = w - 5;
+        const int bandBottom = h - 44;      // leave room for the footer
 
-            HPEN borderP = CreatePen(PS_SOLID, 1, SmartColors::BORDER);
-            HPEN oldP = (HPEN)SelectObject(memDC, borderP);
-            HBRUSH nullB = (HBRUSH)GetStockObject(NULL_BRUSH);
-            HBRUSH oldB = (HBRUSH)SelectObject(memDC, nullB);
-            Rectangle(memDC, attrRc.left, attrRc.top, attrRc.right, attrRc.bottom);
-            SelectObject(memDC, oldP); SelectObject(memDC, oldB);
-            DeleteObject(borderP);
+        RECT bandRc = {bandLeft, bandTop, bandRight, bandBottom};
+        HBRUSH cardBg = CreateSolidBrush(SmartColors::BG_CARD);
+        FillRect(memDC, &bandRc, cardBg);
+        DeleteObject(cardBg);
 
-            SelectObject(memDC, m_hFontSmall);
-            SetTextColor(memDC, SmartColors::TEXT_SECONDARY);
-            RECT tRc = {rx + 12, ry + 6, rx + rightW - 12, ry + 24};
-            DrawTextW(memDC, L"SMART Attributes", -1, &tRc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        HPEN borderP = CreatePen(PS_SOLID, 1, SmartColors::BORDER);
+        HPEN oldP = (HPEN)SelectObject(memDC, borderP);
+        HBRUSH nullB = (HBRUSH)GetStockObject(NULL_BRUSH);
+        HBRUSH oldB = (HBRUSH)SelectObject(memDC, nullB);
+        Rectangle(memDC, bandRc.left, bandRc.top, bandRc.right, bandRc.bottom);
+        SelectObject(memDC, oldP); SelectObject(memDC, oldB);
+        DeleteObject(borderP);
 
-            // Column headers
-            int ay = ry + 28;
-            SetTextColor(memDC, SmartColors::TEXT_DIM);
-            RECT hdrRc = {rx + 8, ay, rx + rightW - 8, ay + 16};
-            DrawTextW(memDC, L"ID  Attribute Name               Value Worst Thresh  Raw", -1, &hdrRc,
-                      DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-            ay += 18;
+        // ── Column geometry ──
+        const int pad = 12;
+        const int gap = 18;                 // the band is wide; let it breathe
+        const int idW = 34, valueW = 64, worstW = 64, threshW = 64;
+        const int inner = (bandRight - pad) - (bandLeft + pad);
+        // Name and Raw share everything the fixed columns leave, and Raw takes
+        // the remainder so the last column always ends inside the band.
+        const int avail = inner - (idW + valueW + worstW + threshW + gap * 5);
+        const int nameW = std::max(120, avail * 38 / 100);
+        const int rawW  = std::max(120, avail - nameW);
 
-            // Separator
-            HPEN sepP = CreatePen(PS_SOLID, 1, SmartColors::BORDER);
-            SelectObject(memDC, sepP);
-            MoveToEx(memDC, rx + 8, ay, nullptr);
-            LineTo(memDC, rx + rightW - 8, ay);
-            DeleteObject(sepP);
+        int colX[6] = {0};
+        colX[0] = bandLeft + pad;
+        colX[1] = colX[0] + idW + gap;
+        colX[2] = colX[1] + nameW + gap;
+        colX[3] = colX[2] + valueW + gap;
+        colX[4] = colX[3] + worstW + gap;
+        colX[5] = colX[4] + threshW + gap;
+        const int colW[6] = {idW, nameW, valueW, worstW, threshW, rawW};
 
-            // List attributes
-            SelectObject(memDC, m_hFontMono);
-            int maxRows = (attrH - 60) / 18;
-            for (size_t i = 0; i < snap.attributes.size() && i < static_cast<size_t>(maxRows); ++i) {
-                auto& attr = snap.attributes[i];
-                ay += 2;
+        // ── Title ──
+        SelectObject(memDC, m_hFontSmall);
+        SetTextColor(memDC, SmartColors::TEXT_SECONDARY);
+        RECT titleRc = {bandLeft + pad, bandTop + 6, bandRight - pad, bandTop + 24};
+        DrawTextW(memDC, L"SMART Attributes", -1, &titleRc,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
-                COLORREF textColor = SmartColors::TEXT_PRIMARY;
-                if (attr.preFailure && attr.current <= attr.threshold) {
-                    textColor = SmartColors::HEALTH_RED;
-                } else if (attr.preFailure) {
-                    textColor = SmartColors::HEALTH_YELLOW;
-                }
+        // ── Header ──
+        int ay = bandTop + 28;
+        SetTextColor(memDC, SmartColors::TEXT_DIM);
+        const wchar_t* const headerText[6] = {
+            L"ID", L"Attribute Name", L"Value", L"Worst", L"Thresh", L"Raw"
+        };
+        for (int c = 0; c < 6; ++c) {
+            RECT r = {colX[c], ay, colX[c] + colW[c], ay + 16};
+            const UINT fmt = DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS |
+                             ((c >= 2 && c <= 4) ? DT_RIGHT : DT_LEFT);
+            DrawTextW(memDC, headerText[c], -1, &r, fmt);
+        }
+        ay += 18;
 
-                SetTextColor(memDC, textColor);
-                RECT attrR = {rx + 8, ay, rx + rightW - 8, ay + 16};
-                wchar_t line[256];
-                std::wstring rawW = ataToWide(attr.rawString);
-                if (rawW.length() > 25) rawW = rawW.substr(0, 23) + L"..";
-                swprintf(line, 256, L"%3d %-28.28s %3d  %3d  %3d   %s",
-                         attr.id, ataToWide(attr.name).c_str(),
-                         attr.current, attr.worst, attr.threshold,
-                         rawW.c_str());
-                DrawTextW(memDC, line, -1, &attrR, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-                ay += 16;
+        HPEN sepP = CreatePen(PS_SOLID, 1, SmartColors::BORDER);
+        SelectObject(memDC, sepP);
+        MoveToEx(memDC, bandLeft + 8, ay, nullptr);
+        LineTo(memDC, bandRight - 8, ay);
+        DeleteObject(sepP);
+
+        // ── Rows ──
+        SelectObject(memDC, m_hFontMono);
+        const int rowH = 18;
+        const int firstRowY = ay + 4;
+        const int availRows = std::max(0, (bandBottom - 6 - firstRowY) / rowH);
+        m_attrRowsFit = availRows;
+
+        const int total = static_cast<int>(snap.attributes.size());
+        const int maxScroll = std::max(0, total - availRows);
+        // Also clamped here, not just in the wheel handler: the table is
+        // shorter on a drive with fewer attributes.
+        const int first = std::min(m_attrScroll, maxScroll);
+        const int last = std::min(total, first + availRows);
+
+        for (int i = first; i < last; ++i) {
+            const SmartAttribute& attr = snap.attributes[i];
+            const int rowY = firstRowY + (i - first) * rowH;
+
+            if (((i - first) & 1) != 0) {   // zebra striping
+                RECT zr = {bandLeft + 8, rowY, bandRight - 8, rowY + rowH};
+                HBRUSH zb = CreateSolidBrush(RGB(24, 24, 28));
+                FillRect(memDC, &zr, zb);
+                DeleteObject(zb);
             }
+
+            // Colour carries state, not category: a pre-failure attribute is
+            // highlighted only once it actually reaches its threshold.  The
+            // old rule also tinted every pre-failure row yellow regardless of
+            // its value, which marked healthy drives and told the reader
+            // nothing.
+            COLORREF textColor = SmartColors::TEXT_PRIMARY;
+            if (attr.preFailure && attr.current <= attr.threshold) {
+                textColor = SmartColors::HEALTH_RED;
+            }
+
+            wchar_t buf[32];
+            swprintf(buf, 32, L"%02X", attr.id);
+            RECT idRc = {colX[0], rowY, colX[0] + colW[0], rowY + rowH};
+            SetTextColor(memDC, SmartColors::TEXT_SECONDARY);
+            DrawTextW(memDC, buf, -1, &idRc, DT_VCENTER | DT_SINGLELINE);
+
+            SetTextColor(memDC, textColor);
+            RECT nameRc = {colX[1], rowY, colX[1] + colW[1], rowY + rowH};
+            const std::wstring name = ataToWide(attr.name);
+            DrawTextW(memDC, name.c_str(), -1, &nameRc,
+                      DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+            const unsigned norm[3] = {attr.current, attr.worst, attr.threshold};
+            for (int c = 0; c < 3; ++c) {
+                wchar_t nb[16];
+                swprintf(nb, 16, L"%u", norm[c]);
+                RECT nr = {colX[2 + c], rowY, colX[2 + c] + colW[2 + c], rowY + rowH};
+                DrawTextW(memDC, nb, -1, &nr, DT_VCENTER | DT_SINGLELINE | DT_RIGHT);
+            }
+
+            SetTextColor(memDC, SmartColors::ACCENT_CYAN);
+            RECT rawRc = {colX[5], rowY, colX[5] + colW[5], rowY + rowH};
+            const std::wstring raw = ataToWide(attr.rawString);
+            DrawTextW(memDC, raw.c_str(), -1, &rawRc,
+                      DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        }
+
+        // Scroll hint, only when the list actually overflows.
+        if (total > availRows) {
+            wchar_t hint[128];
+            swprintf(hint, 128, L"showing %d-%d of %d  -  wheel scrolls",
+                     first + 1, last, total);
+            SelectObject(memDC, m_hFontSmall);
+            SetTextColor(memDC, SmartColors::TEXT_DIM);
+            RECT hintRc = {bandRight - 560, bandTop + 6, bandRight - pad - 8, bandTop + 24};
+            DrawTextW(memDC, hint, -1, &hintRc,
+                      DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
         }
     }
 

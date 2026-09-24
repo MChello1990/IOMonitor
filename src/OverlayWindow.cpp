@@ -33,7 +33,7 @@ std::wstring OverlayWindow::fmtRate(double bps) const {
     int i = 0; double v = bps;
     while (v >= 1024.0 && i < 3) { v /= 1024.0; i++; }
     wchar_t b[32];
-    swprintf(b, 32, L"%.2f %s", v, u[i]);
+    swprintf(b, 32, L"%.2f %ls", v, u[i]);
     return b;
 }
 
@@ -43,9 +43,9 @@ std::wstring OverlayWindow::fmtBytes(uint64_t bytes) const {
     int i = 0; double v = static_cast<double>(bytes);
     while (v >= 1024.0 && i < 4) { v /= 1024.0; i++; }
     wchar_t b[32];
-    if (v >= 100.0)      swprintf(b, 32, L"%.0f %s", v, u[i]);
-    else if (v >= 10.0)  swprintf(b, 32, L"%.1f %s", v, u[i]);
-    else                 swprintf(b, 32, L"%.2f %s", v, u[i]);
+    if (v >= 100.0)      swprintf(b, 32, L"%.0f %ls", v, u[i]);
+    else if (v >= 10.0)  swprintf(b, 32, L"%.1f %ls", v, u[i]);
+    else                 swprintf(b, 32, L"%.2f %ls", v, u[i]);
     return b;
 }
 

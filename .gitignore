@@ -365,3 +365,8 @@ FodyWeavers.xsd
 /pytest.ini
 /run_tests.bat
 /skills
+/.idea/
+/build/
+/build-*/
+/.codebuddy/
+/IOMonitor/

@@ -26,11 +26,18 @@ IOMonitor/
 │   ├── Recorder.h/cpp        # 录制：CSV 格式 I/O 数据导出（异步写入队列）
 │   ├── OverlayWindow.h/cpp   # 悬浮窗：Win32 置顶迷你窗口
 │   ├── IopsMonitor.h/cpp     # IOPS 与队列深度监控
-│   ├── SmartDataModel.h/cpp  # SMART 数据模型（镜像 smartmontools 结构体）
-│   ├── SmartReaderBase.h/cpp # SMART 抽象读取器接口（工厂模式）
-│   ├── SmartReaderAta.h/cpp  # ATA/SATA 磁盘 SMART 读取器
-│   ├── SmartReaderNvme.h/cpp # NVMe 磁盘 SMART 读取器
-│   ├── SmartReaderScsi.h/cpp # SCSI/SAS/USB 磁盘 SMART 读取器
+│   ├── CdiSmart.h/cpp        # SMART 采集核心：磁盘枚举、识别、刷新（CAtaSmart 移植）
+│   ├── CdiSmartDetail.h      # 移植层共享内部件（字节序、字符串、厂商旁路表）
+│   ├── CdiSmartSupport.cpp   # 共享字符串表与 FlagLife* 旁路存储
+│   ├── CdiSmartIo.cpp        # 四条采集通路（ATA 直通 / SAT / 传统 IOCTL / NVMe）
+│   ├── CdiSmartFill.cpp      # SMART 属性与阈值解析（FillSmartData/FillSmartThreshold）
+│   ├── CdiSmartSsd.cpp       # 厂商识别与 SSD 分类（CheckSsdSupport 及全部厂商判定）
+│   ├── CdiSmartStatus.cpp    # 健康判定、通电时间单位、磁盘状态（CheckDiskStatus）
+│   ├── CdiSmartNvmeInterp.cpp# NVMe SMART 日志 → ATA 风格属性表
+│   ├── CdiAttributeName.h/cpp# SMART 属性命名与原始值呈现
+│   ├── CdiSmartAttributeTable.cpp # 属性名表（由 CrystalDiskInfo 语言文件生成）
+│   ├── SmartDataModel.h/cpp  # SMART 数据模型（GUI 侧契约）
+│   ├── SmartCdiAdapter.h/cpp # 移植层 → GUI 数据模型的适配器
 │   ├── SmartMonitor.h/cpp    # SMART 监控主页面（GUI 窗口）
 │   ├── SmartOverlayWindow.h/cpp # SMART 悬浮窗（精简迷你窗口）
 │   ├── SmartDebug.h          # 调试追踪框架（线程感知诊断日志）
@@ -90,11 +97,18 @@ iomonitor.exe --help
 | `--num N` | `-n N` | 30 | 5–100 | 界面显示的进程数量 |
 | `--record` | `-o` | — | — | 启动时自动开始 CSV 录制 |
 | `--help` | `-h` | — | — | 显示帮助信息 |
+| `--smart-dump` | — | — | — | 打印所有磁盘的 S.M.A.R.T. 数据后退出（需管理员权限，见下） |
+
+`--smart-dump` 会输出每块磁盘的型号 / 序列号 / 固件 / 接口 / 容量 / 健康判定与完整属性表，并附上 GUI 适配层看到的结果，最后给出本次运行的跟踪日志路径。用于在真机上核对采集层行为：
+
+```
+iomonitor.exe --smart-dump
+```
 
 ## 界面说明
 
 ```
-┌──── IO Monitor v2.0 ─────────────────────────────────────────────────┐
+┌──── IO Monitor v3.0 ─────────────────────────────────────────────────┐
 │  Up: 00:05:32  |  Procs: 12 active / 184 total  |  Disk: R 12.3M W 5.7M/s │
 ├───────────────────────────────────────────────────────────────────────┤
 │  #   Process              PID    Read/sec       Write/sec      Session IO │
@@ -229,6 +243,12 @@ iomonitor.exe --help
 ### 兼容性
 
 - 操作系统：Windows 10 版本 1607 及以上（需 VT100 终端支持）
+- SMART 采集层：Windows 10 1709 及以上可走 NVMe 直读通路
+  （`StorageAdapterProtocolSpecificProperty` / `StorageDeviceProtocolSpecificProperty`）。
+  Windows 10 1507–1703 会回退到 SATA/SAT 通路，NVMe 盘可能只能读到型号而拿不到健康日志。
+  Windows 10 与 Windows 11 均完整支持。
+- 需管理员权限：读取 S.M.A.R.T. 会以 `GENERIC_WRITE` 打开 `\\.\PhysicalDriveN`。
+  非管理员运行时磁盘列表为空，具体原因会写入跟踪日志。
 - 编译器：MSVC 2019+ 或 MinGW-w64 8.0+
 - C++ 标准：C++17
 
@@ -238,7 +258,9 @@ iomonitor.exe --help
 
 ## 特别鸣谢
 
-本项目 SMART 硬盘健康监控模块的数据模型（`SmartDataModel.h`）参考了 [smartmontools](https://github.com/smartmontools/smartmontools) 的结构体设计（包括 ATA SMART 属性结构、NVMe SMART/Health Information Log 结构等），对此表示诚挚的感谢。smartmontools 是一个优秀的开源硬盘 S.M.A.R.T. 监控工具，感谢其开放源代码，为本项目的 SMART 功能实现提供了宝贵的参考。
+本项目 SMART 硬盘健康监控模块的采集层（`CdiSmart*.h/cpp`）是 [CrystalDiskInfo](https://github.com/hiyohiyo/CrystalDiskInfo) 的 `CAtaSmart` 移植实现（MIT License，Copyright (c) hiyohiyo），包括磁盘枚举与识别、S.M.A.R.T. 属性/阈值读取、厂商识别与 SSD 分类、健康状态判定，以及由 [NVMeInterpreter](https://github.com/ebangin127/)（MIT License）翻译的 NVMe SMART 日志解析。属性名称表（`CdiSmartAttributeTable.cpp`）由 CrystalDiskInfo 的 `Language/English.lang` 生成。感谢其开放源代码，为本项目的 SMART 功能提供了坚实可靠的实现基础。
+
+GUI 侧的数据模型（`SmartDataModel.h`）在设计上参考了 [smartmontools](https://github.com/smartmontools/smartmontools) 的结构体定义，其数据模型层自本项目早期版本沿用至今，同样致以诚挚感谢。
 
 ## 常见问题
 

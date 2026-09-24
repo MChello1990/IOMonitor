@@ -1,10 +1,16 @@
 cmake_minimum_required(VERSION 3.16)
-project(IOMonitor VERSION 2.0.0 LANGUAGES CXX)
+project(IOMonitor VERSION 3.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_compile_definitions(UNICODE _UNICODE)
+
+# The S.M.A.R.T. layer needs the Windows 10 API surface: the NVMe storage
+# protocol query and StorageAdapterProtocolSpecificProperty are only declared
+# for _WIN32_WINNT >= 0x0A00.  Without this MinGW compiles against the oldest
+# API set it supports and the declarations go missing.
+add_compile_definitions(_WIN32_WINNT=0x0A00 WINVER=0x0A00)
 
 if(MSVC)
     add_compile_definitions(WIN32_LEAN_AND_MEAN NOMINMAX)
@@ -22,10 +28,18 @@ set(SOURCES
     src/OverlayWindow.cpp
     src/IopsMonitor.cpp
     src/SmartDataModel.cpp
-    src/SmartReaderBase.cpp
-    src/SmartReaderAta.cpp
-    src/SmartReaderNvme.cpp
-    src/SmartReaderScsi.cpp
+    # CrystalDiskInfo S.M.A.R.T. port (replaces the smartmontools readers)
+    src/CdiSmart.cpp
+    src/CdiSmartSupport.cpp
+    src/CdiSmartIo.cpp
+    src/CdiSmartFill.cpp
+    src/CdiSmartSsd.cpp
+    src/CdiSmartStatus.cpp
+    src/CdiSmartNvmeInterp.cpp
+    src/CdiAttributeName.cpp
+    src/CdiSmartAttributeTable.cpp
+    # GUI-facing data model + adapter
+    src/SmartCdiAdapter.cpp
     src/SmartMonitor.cpp
     src/SmartOverlayWindow.cpp
     src/SmartDebugWindow.cpp
@@ -38,10 +52,10 @@ set(HEADERS
     src/OverlayWindow.h
     src/IopsMonitor.h
     src/SmartDataModel.h
-    src/SmartReaderBase.h
-    src/SmartReaderAta.h
-    src/SmartReaderNvme.h
-    src/SmartReaderScsi.h
+    src/CdiSmart.h
+    src/CdiSmartDetail.h
+    src/CdiAttributeName.h
+    src/SmartCdiAdapter.h
     src/SmartMonitor.h
     src/SmartOverlayWindow.h
     src/SmartDebug.h

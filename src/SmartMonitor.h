@@ -37,13 +37,10 @@
 #include <cstdint>
 
 #include "SmartDataModel.h"
-#include "SmartReaderBase.h"
+#include "CdiSmart.h"
 #include "SmartDebug.h"
 
 // ── Forward declarations ─────────────────────────────────────────────
-class SmartReaderAta;
-class SmartReaderNvme;
-class SmartReaderScsi;
 class SmartDebugWindow;
 
 // ── SmartMonitor: Main SMART health monitor page (GUI window) ────────
@@ -72,12 +69,13 @@ private:
     void registerWindowClasses();
 
     // ── Disk enumeration & detection ──
+    // Enumeration, bus-type detection and S.M.A.R.T. acquisition all live in
+    // the CrystalDiskInfo port; this only adapts its result to the GUI model.
     void enumerateDisks();
-    std::unique_ptr<SmartReaderBase> createReaderForDisk(uint32_t diskNumber);
 
     // ── Data refresh ──
     void refreshSmartData();
-    bool readSmartDataForDisk(uint32_t diskNumber, SmartDataSnapshot& snapshot);
+    bool readSmartDataForDisk(uint32_t cdiIndex, SmartDataSnapshot& snapshot);
     void computeHealth(SmartDataSnapshot& snapshot);
     void computeRates(SmartDataSnapshot& snapshot);
 
@@ -142,10 +140,18 @@ private:
         SmartDataSnapshot snapshot;
         bool smartAvailable = false;
         std::string errorMessage;
+        // Index into m_cdi's drive list.  Kept separate from
+        // identity.diskNumber so the displayed numbering stays positional
+        // even if a drive is hidden by the port's filters.
+        uint32_t cdiIndex = 0;
     };
     std::vector<DiskEntry> m_disks;
     size_t m_selectedDiskIndex = 0;
     std::mutex m_dataMutex;
+
+    // CrystalDiskInfo S.M.A.R.T. engine (see CdiSmart.h).  Created lazily on
+    // first enumeration.
+    std::unique_ptr<cdi::CAtaSmart> m_cdi;
 
     // Refresh settings
     std::atomic<int> m_refreshIntervalSec{120};  // Default 120 seconds
@@ -159,6 +165,15 @@ private:
     std::deque<TempPoint> m_tempHistory;
     std::deque<double> m_healthHistory;
     std::chrono::steady_clock::time_point m_sessionStart;
+
+    // Attribute table viewport.  The table lists more rows than the band can
+    // show on a drive with many attributes, so it scrolls with the wheel.
+    // Both values are (re)computed by paint(); m_attrBandTop is 0 until the
+    // first paint, which the wheel handler uses to ignore events that land
+    // above the table.
+    int m_attrScroll = 0;
+    int m_attrRowsFit = 0;
+    int m_attrBandTop = 0;
 
     // Previous snapshot for rate calculation
     SmartDataSnapshot m_prevSnapshot;
